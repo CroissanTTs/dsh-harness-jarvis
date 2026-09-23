@@ -1,0 +1,10 @@
+node_modules/
+npm-cache/
+lib/
+.superpowers/
+.DS_Store
+
+macos/.build/
+macos/.modulecache/
+macos/jarvis-panel
+macos/edge-sketch

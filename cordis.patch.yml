@@ -1,0 +1,24 @@
+# dsh-harness-jarvis bundle layer — SCAFFOLD. Neutral defaults only.
+# Users override per-profile in their own cordis.patch.yml, addressing this
+# row BY ID (never insert a second row with the same id).
+#
+# The Jarvis agent is created by the plugin itself via ctx.agentLoop.createAgent()
+# (SPEC §9.1) — NOT declared in deployment cordis.yml. The provider/model/cwd
+# below configure that createAgent call.
+- insert:
+    - id: dsh-harness-jarvis
+      name: 'dsh-harness-jarvis'
+      config:
+        locale: zh                 # zh | en
+        audioDir: ~/.dsh/jarvis    # mem/lock/runtime live under here
+        managedFile: ~/.dsh/jarvis/managed.json   # 托管集 (SPEC §9.2)
+        lockFile: ~/.dsh/jarvis/lock.json         # 输出锁持久化 (崩溃恢复)
+        runtimeFile: ~/.dsh/jarvis/runtime.json   # 悬浮窗 runtime (origin+token, SPEC §12)
+        titlePrefix: '贾维斯-'     # worker title 前缀 (SPEC §9.2)
+        ttsBackend: edge           # 内置 TTS: edge (SPEC §5);kokoro 后续
+        edgeVoice: zh-CN-YunjianNeural  # 成熟男声(贾维斯默认)
+        archiveIdleDays: 7         # 闲置归档阈值 (SPEC §10.3 F)
+        provider: bailian          # 百炼 provider (SPEC §9.1)
+        model: qwen3.8-max-0902  # 百炼 model (user's configured model)
+        jarvisSessionId: jarvis    # createAgent sessionId
+        jarvisCwd: ~/jarvis  # visible workspace (not hidden ~/.dsh/)

@@ -1,0 +1,47 @@
+{
+  "name": "dsh-harness-jarvis",
+  "version": "0.1.0-scaffold",
+  "description": "Jarvis commander plugin for DeepSeek Harness: a瘦编排 agent that manages multiple worker sessions (inject/monitor/续轮), relay-approves, remembers (two-tier temp/long-term), via a dsh-notch-style悬浮窗. MVP: text-input entry (no STT), no danger-full-access. Per SPEC v0.9.",
+  "license": "MIT",
+  "author": "zane",
+  "keywords": [
+    "deepseek", "dsh", "harness", "jarvis", "commander",
+    "agent", "multi-session", "approval", "memory", "voice", "tts"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "echo 'scaffold: no tests yet' && exit 0"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "dependencies": {
+    "node-edge-tts": "^1.2.10"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-scope": "^0.1.5-rc.1",
+    "@types/node": "^20",
+    "typescript": "^5.9.0"
+  }
+}

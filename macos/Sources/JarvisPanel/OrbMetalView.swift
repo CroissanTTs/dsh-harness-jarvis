@@ -174,7 +174,11 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
 
   private func updatePacing() {
     isPaused = !rendering
-    preferredFramesPerSecond = sim.motion == .idle && sim.dock == nil ? 30 : 60
+    if sim.dock != nil {
+      preferredFramesPerSecond = 20
+    } else {
+      preferredFramesPerSecond = sim.motion == .idle ? 30 : 60
+    }
   }
 
   // MARK: MTKViewDelegate

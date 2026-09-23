@@ -92,6 +92,24 @@ final class VisibilityPolicyTests: XCTestCase {
     XCTAssertFalse(eval(input(launcher: true, settings: s)).hidden)
   }
 
+  func testCollapsedStripStaysLegible() {
+    var i = input()
+    i.strip = true
+    XCTAssertEqual(eval(i).opacity, 0.8, accuracy: 1e-9)
+  }
+
+  func testStripFloorDoesNotLowerHigherOpacity() {
+    var i = input(front: "ai.deepseek.dsh.desktop")
+    i.strip = true
+    XCTAssertEqual(eval(i).opacity, 1.0)
+  }
+
+  func testStripStillHiddenInFullscreen() {
+    var i = input(fullscreen: true)
+    i.strip = true
+    XCTAssertTrue(eval(i).hidden)
+  }
+
   func testHiddenWinsOverProminentAndHover() {
     XCTAssertTrue(eval(input(fullscreen: true, hovering: true, prominent: true)).hidden)
   }

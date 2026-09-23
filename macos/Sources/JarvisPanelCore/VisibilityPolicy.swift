@@ -11,6 +11,8 @@ public struct VisibilityInput: Sendable {
   public var interacting: Bool
   /// Orb tint is amber or red (needs attention / error).
   public var prominent: Bool
+  /// Collapsed into the edge strip, which is too thin to read when faded.
+  public var strip = false
   public var settings: PanelSettings
 
   public init(frontBundleID: String?, fullscreen: Bool, appLauncher: Bool, cursorDistance: Double?,
@@ -42,6 +44,7 @@ public enum VisibilityPolicy {
   public static let dshPrefix = "ai.deepseek.dsh.desktop"
   public static let proximity = 80.0
   public static let prominentFloor = 0.85
+  public static let stripFloor = 0.8
 
   public static func evaluate(_ i: VisibilityInput) -> VisibilityOutput {
     let s = i.settings
@@ -53,6 +56,7 @@ public enum VisibilityPolicy {
 
     var base = front.hasPrefix(dshPrefix) ? s.dshOpacity : s.otherOpacity
     if s.keepProminent && i.prominent { base = max(base, prominentFloor) }
+    if i.strip { base = max(base, stripFloor) }
     if i.hovering || i.interacting { return VisibilityOutput(hidden: false, opacity: 1) }
     if s.proximityFade, let d = i.cursorDistance {
       let radius = Double(Placement.orbRadius)

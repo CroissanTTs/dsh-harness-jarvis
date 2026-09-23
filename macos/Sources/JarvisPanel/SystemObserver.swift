@@ -52,7 +52,8 @@ final class SystemObserver {
 
   /// Fullscreen: an opaque layer-0 window of the frontmost app covering the
   /// whole screen, menu bar included. Launcher: a large visible Spotlight
-  /// window (macOS 26 Apps) or a Dock overlay above the desktop.
+  /// panel (macOS 26 Apps). Dock overlays are not used: revealing the desktop
+  /// also raises a full-screen Dock window.
   private func scanWindows(frontPID: pid_t?) -> (Bool, Bool) {
     guard let screen = screen(),
           let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
@@ -70,13 +71,11 @@ final class SystemObserver {
       let layer = (w[kCGWindowLayer as String] as? Int) ?? 0
       let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
 
-      if !launcher, alpha > 0.5, rect.width >= target.width * 0.6, rect.height >= target.height * 0.6,
-         rect.intersects(target) {
-        switch NSRunningApplication(processIdentifier: pid)?.bundleIdentifier {
-        case "com.apple.Spotlight": launcher = true
-        case "com.apple.dock": launcher = layer > 0
-        default: break
-        }
+      if !launcher, alpha > 0.5, layer > 0, rect.width >= target.width * 0.5, rect.height >= target.height * 0.5,
+         rect.intersects(target),
+         NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.Spotlight" {
+        launcher = true
+        if !appLauncher { Log.write("launcher window: layer=\(layer) alpha=\(alpha) \(rect)") }
       }
       if !full, pid == frontPID, layer == 0, alpha >= 0.9,
          !Self.overlayOwners.contains(where: { owner.localizedCaseInsensitiveContains($0) }),

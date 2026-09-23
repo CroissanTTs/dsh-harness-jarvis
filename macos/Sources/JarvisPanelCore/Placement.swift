@@ -29,6 +29,50 @@ public struct QuickBarLayout: Equatable, Sendable {
   public var stackLimit: CGFloat
 }
 
+/// Where the orb may sit: the screen below the menu bar, with the Dock's own
+/// footprint as an obstacle. `visibleFrame` removes the Dock's whole edge, which
+/// keeps the orb out of the corners beside a side Dock.
+public struct Workspace: Equatable, Sendable {
+  public var bounds: CGRect
+  public var dock: CGRect?
+
+  public init(bounds: CGRect, dock: CGRect?) {
+    self.bounds = bounds
+    self.dock = dock
+  }
+
+  /// `dockLength` is the Dock's extent along its edge (centered on the screen);
+  /// nil treats the whole edge as occupied.
+  public static func make(screen: CGRect, visible: CGRect, dockLength: CGFloat?) -> Workspace {
+    let bounds = CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: visible.maxY - screen.minY)
+    let right = screen.maxX - visible.maxX
+    let left = visible.minX - screen.minX
+    let bottom = visible.minY - screen.minY
+    func span(center: CGFloat, lower: CGFloat, upper: CGFloat) -> (CGFloat, CGFloat) {
+      guard let dockLength else { return (lower, upper) }
+      return (max(lower, center - dockLength / 2), min(upper, center + dockLength / 2))
+    }
+    var dock: CGRect?
+    if right > 1 || left > 1 {
+      let (y0, y1) = span(center: screen.midY, lower: bounds.minY, upper: bounds.maxY)
+      let x = right > 1 ? visible.maxX : screen.minX
+      dock = CGRect(x: x, y: y0, width: max(right, left), height: y1 - y0)
+    } else if bottom > 1 {
+      let (x0, x1) = span(center: screen.midX, lower: bounds.minX, upper: bounds.maxX)
+      dock = CGRect(x: x0, y: screen.minY, width: x1 - x0, height: bottom)
+    }
+    return Workspace(bounds: bounds, dock: dock)
+  }
+
+  fileprivate enum Side { case left, right, bottom }
+
+  fileprivate var dockSide: Side? {
+    guard let dock else { return nil }
+    if dock.height > dock.width { return dock.midX > bounds.midX ? .right : .left }
+    return .bottom
+  }
+}
+
 /// Pure geometry for snapping and the hover/quick-bar layouts (spec §4, §5.3,
 /// §6). All rects are AppKit screen coordinates (y up).
 public enum Placement {
@@ -50,11 +94,43 @@ public enum Placement {
             y: min(max(frame.minY, visible.minY), visible.maxY - frame.height))
   }
 
-  /// Clamps into the visible area, then snaps flush to an edge or corner when
-  /// within `snapDistance`. The top edge under the notch never docks.
-  public static func snap(frame: CGRect, visible: CGRect, notchX: ClosedRange<CGFloat>?) -> (origin: CGPoint, dock: DockEdge?) {
-    var o = clampOrigin(frame: frame, visible: visible)
+  /// Keeps the frame inside the workspace and off the Dock.
+  public static func clampOrigin(frame: CGRect, workspace ws: Workspace) -> CGPoint {
+    var o = clampOrigin(frame: frame, visible: ws.bounds)
+    guard let dock = ws.dock, let side = ws.dockSide else { return o }
     let f = CGRect(origin: o, size: frame.size)
+    guard f.minX < dock.maxX, f.maxX > dock.minX, f.minY < dock.maxY, f.maxY > dock.minY else { return o }
+    switch side {
+    case .right: o.x = dock.minX - frame.width
+    case .left: o.x = dock.maxX
+    case .bottom: o.y = dock.maxY
+    }
+    return o
+  }
+
+  public static func snap(frame: CGRect, visible: CGRect, notchX: ClosedRange<CGFloat>?) -> (origin: CGPoint, dock: DockEdge?) {
+    snap(frame: frame, workspace: Workspace(bounds: visible, dock: nil), notchX: notchX)
+  }
+
+  /// Clamps into the workspace, then snaps flush to an edge or corner when
+  /// within `snapDistance`. Beside the Dock the edge is the Dock's inner side;
+  /// past its ends the orb reaches the screen edge. The top edge under the
+  /// notch never docks.
+  public static func snap(frame: CGRect, workspace ws: Workspace, notchX: ClosedRange<CGFloat>?) -> (origin: CGPoint, dock: DockEdge?) {
+    var o = clampOrigin(frame: frame, workspace: ws)
+    let f = CGRect(origin: o, size: frame.size)
+    var limits = ws.bounds
+    if let dock = ws.dock, let side = ws.dockSide {
+      let alongY = f.minY < dock.maxY && f.maxY > dock.minY
+      let alongX = f.minX < dock.maxX && f.maxX > dock.minX
+      switch side {
+      case .right where alongY: limits = CGRect(x: limits.minX, y: limits.minY, width: dock.minX - limits.minX, height: limits.height)
+      case .left where alongY: limits = CGRect(x: dock.maxX, y: limits.minY, width: limits.maxX - dock.maxX, height: limits.height)
+      case .bottom where alongX: limits = CGRect(x: limits.minX, y: dock.maxY, width: limits.width, height: limits.maxY - dock.maxY)
+      default: break
+      }
+    }
+    let visible = limits
     let left = f.minX - visible.minX <= snapDistance
     let right = visible.maxX - f.maxX <= snapDistance
     let bottom = f.minY - visible.minY <= snapDistance

@@ -27,6 +27,7 @@ final class AppController: NSObject {
   private var hidden = false
   private var wasQuickOpen = false
   private var toastWork: DispatchWorkItem?
+  private var overlayHideWork: DispatchWorkItem?
   private var trackTimer: Timer?
   private var monitors: [Any] = []
   private var cancellables = Set<AnyCancellable>()
@@ -59,7 +60,6 @@ final class AppController: NSObject {
     applySettings()
     restorePosition()
     orb.orderFrontRegardless()
-    overlay.orderFrontRegardless()
 
     orb.onPress = { [weak self] in self?.beginPress() }
     orb.onDrag = { [weak self] in self?.drag(by: $0) }
@@ -113,11 +113,13 @@ final class AppController: NSObject {
     }
     if let toast = model.toast, overlayState.toast != toast {
       overlayState.toast = toast
+      updateOverlayPresence()
       toastWork?.cancel()
       let work = DispatchWorkItem { [weak self] in
         guard let self else { return }
         model.clearToast()
         overlayState.toast = nil
+        updateOverlayPresence()
       }
       toastWork = work
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
@@ -136,6 +138,31 @@ final class AppController: NSObject {
   private static func key(for screen: NSScreen) -> String {
     let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
     return n.map { "\($0.uint32Value)" } ?? "main"
+  }
+
+  private static func workspace(_ screen: NSScreen) -> Workspace {
+    Workspace.make(screen: screen.frame, visible: screen.visibleFrame, dockLength: estimatedDockLength())
+  }
+
+  /// The Dock's resting length along its edge, from its preferences and the
+  /// running apps it shows. Padded so the estimate errs on the Dock's side.
+  private static func estimatedDockLength() -> CGFloat? {
+    guard let prefs = UserDefaults(suiteName: "com.apple.dock") else { return nil }
+    let tile = CGFloat(prefs.object(forKey: "tilesize") as? Double ?? 48)
+    func bundles(_ key: String) -> [String] {
+      (prefs.array(forKey: key) as? [[String: Any]] ?? []).compactMap {
+        ($0["tile-data"] as? [String: Any])?["bundle-identifier"] as? String
+      }
+    }
+    let persistent = bundles("persistent-apps")
+    let pinned = Set(persistent + ["com.apple.finder"])
+    let others = (prefs.array(forKey: "persistent-others") ?? []).count
+    let showRecents = prefs.object(forKey: "show-recents") as? Bool ?? true
+    let running = NSWorkspace.shared.runningApplications.filter {
+      $0.activationPolicy == .regular && !pinned.contains($0.bundleIdentifier ?? "")
+    }.count
+    let items = persistent.count + 1 + (showRecents ? running : 0) + others + 1
+    return CGFloat(items) * tile * 1.12 + 3 * 16 + 40
   }
 
   private static func notchX(_ screen: NSScreen) -> ClosedRange<CGFloat>? {
@@ -170,6 +197,7 @@ final class AppController: NSObject {
       overlay.setFrame(area, display: false)
     }
     if overlayState.hover != hover { overlayState.hover = hover }
+    if overlayState.orbCenter != center { overlayState.orbCenter = center }
     if overlayState.quick != quick { overlayState.quick = quick }
     updateBadgePosition(hover)
   }
@@ -237,8 +265,7 @@ final class AppController: NSObject {
       frame = CGRect(x: visible.maxX - size.width - 16, y: visible.maxY - size.height - 16,
                      width: size.width, height: size.height)
     }
-    frame.origin = Placement.clampOrigin(frame: frame, visible: visible)
-    let result = Placement.snap(frame: frame, visible: visible, notchX: Self.notchX(screen))
+    let result = Placement.snap(frame: frame, workspace: Self.workspace(screen), notchX: Self.notchX(screen))
     orb.setFrameOrigin(result.origin)
     snapped = result.dock
     stripOpen = false
@@ -263,7 +290,7 @@ final class AppController: NSObject {
 
   private func screensChanged() {
     let c = orb.center
-    if !NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(c) }) {
+    if !NSScreen.screens.contains(where: { Self.workspace($0).bounds.insetBy(dx: -1, dy: -1).contains(c) }) {
       restorePosition()
     } else {
       layout()
@@ -299,7 +326,7 @@ final class AppController: NSObject {
     guard !hidden, !dragging, snapshotDir == nil else { return }
     let p = NSEvent.mouseLocation
     let onOrb = overOrb(p)
-    let onOverlay = overlayState.hits(p)
+    let onOverlay = overlay.isVisible && overlayState.hits(p)
     if orb.ignoresMouseEvents == onOrb { orb.ignoresMouseEvents = !onOrb }
     if overlay.ignoresMouseEvents == onOverlay { overlay.ignoresMouseEvents = !onOverlay }
     if onOrb || onOverlay {
@@ -331,6 +358,7 @@ final class AppController: NSObject {
     setTracking(true)
     openStrip()
     layout()
+    updateOverlayPresence()
     if !model.quickBarOpen { withAnimation { overlayState.showHover = true } }
     orb.badgeState.visible = false
   }
@@ -351,6 +379,7 @@ final class AppController: NSObject {
       closeStrip()
       setTracking(false)
     }
+    updateOverlayPresence()
     updateVisibility()
   }
 
@@ -389,7 +418,7 @@ final class AppController: NSObject {
     let screen = NSScreen.screens.first { $0.frame.contains(cursor) } ?? currentScreen
     var frame = orb.frame
     frame.origin = CGPoint(x: start.x + delta.x, y: start.y + delta.y)
-    if let visible = screen?.visibleFrame { frame.origin = Placement.clampOrigin(frame: frame, visible: visible) }
+    if let screen { frame.origin = Placement.clampOrigin(frame: frame, workspace: Self.workspace(screen)) }
     orb.setFrameOrigin(frame.origin)
   }
 
@@ -401,7 +430,7 @@ final class AppController: NSObject {
     }
     dragging = false
     guard let screen = currentScreen else { return }
-    let result = Placement.snap(frame: orb.frame, visible: screen.visibleFrame, notchX: Self.notchX(screen))
+    let result = Placement.snap(frame: orb.frame, workspace: Self.workspace(screen), notchX: Self.notchX(screen))
     snapped = result.dock
     stripOpen = stripEdge != nil
     NSAnimationContext.runAnimationGroup { ctx in
@@ -428,22 +457,21 @@ final class AppController: NSObject {
     layout()
     overlayState.showHover = false
     overlayState.showTargets = false
+    overlayHideWork?.cancel()
     overlay.makeKeyAndOrderFront(nil)
     overlayState.focusToken += 1
   }
 
   private func quickBarClosed() {
     overlayState.showTargets = false
-    if overlay.isKeyWindow {
-      overlay.orderOut(nil)
-      if !hidden { overlay.orderFrontRegardless() }
-    }
+    if overlay.isKeyWindow { overlay.orderOut(nil) }
     if hoverActive {
       withAnimation { overlayState.showHover = true }
     } else {
       closeStrip()
       setTracking(false)
     }
+    updateOverlayPresence()
   }
 
   private func pressVoice() {
@@ -460,15 +488,18 @@ final class AppController: NSObject {
   private func updateVisibility() {
     let p = NSEvent.mouseLocation
     let c = orb.center
-    let input = VisibilityInput(
+    var input = VisibilityInput(
       frontBundleID: observer.frontBundleID, fullscreen: observer.fullscreen, appLauncher: observer.appLauncher,
       cursorDistance: hypot(p.x - c.x, p.y - c.y), hovering: hoverActive,
       interacting: model.quickBarOpen || dragging, prominent: model.appearance.tint != .cyan,
       settings: store.settings)
+    input.strip = stripEdge != nil && !stripOpen
     let out = VisibilityPolicy.evaluate(input)
 
     if out.hidden != hidden {
       hidden = out.hidden
+      Log.write("orb \(hidden ? "hidden" : "shown") front=\(observer.frontBundleID ?? "-") "
+        + "fullscreen=\(observer.fullscreen) launcher=\(observer.appLauncher)")
       orb.orbView.rendering = !hidden
       if hidden {
         if model.quickBarOpen { model.closeQuickBar() }
@@ -477,7 +508,7 @@ final class AppController: NSObject {
         setTracking(false)
       } else {
         orb.orderFrontRegardless()
-        overlay.orderFrontRegardless()
+        updateOverlayPresence()
       }
     }
     guard !hidden else { return }
@@ -491,6 +522,25 @@ final class AppController: NSObject {
       }
     } else {
       orb.alphaValue = target
+    }
+  }
+
+  /// The overlay spans a large area; ordering it out while empty releases its
+  /// backing surfaces.
+  private func updateOverlayPresence() {
+    overlayHideWork?.cancel()
+    overlayHideWork = nil
+    let needed = !hidden && (hoverActive || model.quickBarOpen || overlayState.toast != nil)
+    if needed {
+      if !overlay.isVisible { overlay.orderFrontRegardless() }
+    } else if overlay.isVisible {
+      let work = DispatchWorkItem { [weak self] in
+        guard let self, !overlay.isKeyWindow else { return }
+        overlay.orderOut(nil)
+        overlayState.hitRects = []
+      }
+      overlayHideWork = work
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
   }
 
@@ -554,7 +604,7 @@ extension AppController {
     guard let screen = NSScreen.main else { return }
     var frame = orb.frame
     frame.origin = origin
-    let result = Placement.snap(frame: frame, visible: screen.visibleFrame, notchX: Self.notchX(screen))
+    let result = Placement.snap(frame: frame, workspace: Self.workspace(screen), notchX: Self.notchX(screen))
     orb.setFrameOrigin(result.origin)
     snapped = result.dock
     stripOpen = false

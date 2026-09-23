@@ -73,6 +73,8 @@ final class OverlayState: ObservableObject {
   /// Overlay window frame in screen coordinates (y up).
   @Published var frame: CGRect = .zero
   @Published var hover: HoverLayout?
+  /// Orb center in screen coordinates; hover buttons grow out of it.
+  @Published var orbCenter: CGPoint = .zero
   @Published var showHover = false
   @Published var quick: QuickBarLayout?
   @Published var showTargets = false

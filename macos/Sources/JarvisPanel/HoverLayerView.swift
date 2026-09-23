@@ -39,6 +39,22 @@ enum Readout {
   }
 }
 
+/// The views are full-overlay sized after `.position`, so scaling is anchored
+/// at the button's own center rather than the overlay's.
+private struct EmergeModifier: ViewModifier {
+  var offset: CGSize
+  var scale: CGFloat
+  var opacity: Double
+  var anchor: UnitPoint
+
+  func body(content: Content) -> some View {
+    content
+      .scaleEffect(scale, anchor: anchor)
+      .offset(offset)
+      .opacity(opacity)
+  }
+}
+
 struct HoverLayerView: View {
   @ObservedObject var state: OverlayState
   @ObservedObject var model: PanelModel
@@ -53,9 +69,9 @@ struct HoverLayerView: View {
       if let layout = state.hover {
         ForEach(Array(layout.buttons.enumerated()), id: \.offset) { i, center in
           if state.showHover {
-            button(i, center: state.local(center), side: layout.side)
-              .transition(.scale(scale: 0.6).combined(with: .opacity)
-                .animation(.spring(response: 0.28, dampingFraction: 0.7).delay(Double(i) * 0.05)))
+            let local = state.local(center)
+            button(i, center: local, side: layout.side)
+              .transition(emerge(at: local, index: i))
           }
         }
         if state.showHover {
@@ -65,6 +81,20 @@ struct HoverLayerView: View {
         }
       }
     }
+  }
+
+  /// Grows out of the orb center on insert and shrinks back into it on removal.
+  private func emerge(at center: CGPoint, index: Int) -> AnyTransition {
+    let orb = state.local(state.orbCenter)
+    let size = state.frame.size
+    let anchor = UnitPoint(x: center.x / max(size.width, 1), y: center.y / max(size.height, 1))
+    let hidden = EmergeModifier(offset: CGSize(width: orb.x - center.x, height: orb.y - center.y),
+                                scale: 0.2, opacity: 0, anchor: anchor)
+    let shown = EmergeModifier(offset: .zero, scale: 1, opacity: 1, anchor: anchor)
+    return .asymmetric(
+      insertion: .modifier(active: hidden, identity: shown)
+        .animation(.spring(response: 0.32, dampingFraction: 0.72).delay(Double(index) * 0.05)),
+      removal: .modifier(active: hidden, identity: shown).animation(.easeIn(duration: 0.16)))
   }
 
   private func spec(_ i: Int) -> (icon: String, help: String, action: () -> Void) {

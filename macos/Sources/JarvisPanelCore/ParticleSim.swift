@@ -346,7 +346,7 @@ public struct ParticleSim {
       let sp = (p.vx * p.vx + p.vy * p.vy).squareRoot()
       var a = st.base + 0.18 * sin(t * 2.2 + p.tw * 3) + st.speedGlow * sp + 0.4 * lastEnv + 0.45 * pulse
       if st.flicker { a *= 0.5 + 0.5 * abs(sin(t * (8 + p.f1 * 6) + p.tw)) }
-      if docked { a *= 0.55 }
+      if docked { a *= 0.85 }
       a = min(1, max(0.08, a))
       buffer.append(PointSprite(x: Float(p.x), y: Float(p.y), size: Float(Self.spriteUnits * p.sz), alpha: Float(a)))
     }

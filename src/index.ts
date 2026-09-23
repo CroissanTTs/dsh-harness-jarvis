@@ -41,6 +41,7 @@ import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
+import { LiveState } from './live-state.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -313,6 +314,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   debug(entry, 'apply() started');
   const managed = loadManagedSet(entry.managedFile);
   const lock = loadLock(entry.lockFile);
+  const live = new LiveState(entry.jarvisSessionId);
 
   // ── provide 'jarvis' service so voice-mini (and other plugins) auto-detect
   //    us. voice-mini does ctx.inject(['jarvis']) → flips jarvisLinked (shows
@@ -353,29 +355,43 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         const url = (req.url ?? '').replace(/^\/jarvis/, '').split('?')[0] ?? '/';
         try {
           if (url === '/state' && req.method === 'GET') {
-            const speaking = Date.now() < speakingUntil;
+            const narration = await voiceMiniSpeech(webOrigin);
+            const speaking = Date.now() < speakingUntil || playingChild !== null || narration.speaking;
             const ids = listWorkerIds(ctx, entry);
             if (Date.now() - titleCache.at > 10_000 || ids.some((id) => !(id in titleCache.map))) {
               titleCache.map = (await readTitleMap(ctx, ids)).map;
               titleCache.at = Date.now();
             }
             const sessions = ids.map((id) => ({
-              id, title: titleCache.map[id] || '', status: managed.has(id) ? 'running' : 'idle', unread: false,
+              id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
             }));
+            const pending = live.pending();
             sendJson(res, 200, {
               agentId: entry.jarvisSessionId,
               managed: [...managed],
               speaking,
-              activity: speaking ? 'speaking' : 'idle',
-              error: null,
-              voice: { speaking, muted: voiceMuted },
-              counts: { running: managed.size, pending: 0, unread: 0, failed: 0 },
+              activity: live.activity(speaking, agentRunning(ctx, entry.jarvisSessionId)),
+              error: live.error(),
+              voice: { speaking, muted: voiceMuted, queued: narration.queued },
+              counts: {
+                running: sessions.filter((s) => s.status === 'running').length,
+                pending: pending.length,
+                unread: sessions.filter((s) => s.unread).length,
+                failed: sessions.filter((s) => s.status === 'failed').length,
+              },
               sessions,
-              pending: [],
+              pending,
             });
             return;
           }
-          if (url === '/pending/answer' && req.method === 'POST') { sendJson(res, 404, { error: 'not found' }); return; }
+          if (url === '/pending/answer' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            const result = live.answer(body);
+            debug(entry, '/jarvis/pending/answer: ' + String(body.id) + ' → ' + result);
+            if (result === 'ok') { res.statusCode = 204; res.end(); return; }
+            sendJson(res, result === 'invalid' ? 400 : 404, { error: result });
+            return;
+          }
           if (url === '/voice' && req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}');
             if (body.action === 'mute') { voiceMuted = true; stopSpeech(); }
@@ -385,7 +401,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             debug(entry, '/jarvis/voice: ' + String(body.action));
             res.statusCode = 204; res.end(); return;
           }
-          if (url === '/read' && req.method === 'POST') { res.statusCode = 204; res.end(); return; }
+          if (url === '/read' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            live.markRead(typeof body.session === 'string' && body.session ? body.session : undefined);
+            res.statusCode = 204; res.end(); return;
+          }
           if (url === '/open' && req.method === 'POST') {
             // The host runs inside DSH, so its own .app bundle is the one to raise (covers Beta builds).
             const app = /^(.*?\.app)\//.exec(process.execPath)?.[1];
@@ -532,6 +552,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               source: { kind: 'plugin', plugin: 'dsh-harness-jarvis', form: 'notice', summary: session ? 'user input → inject' : 'user input' },
             };
             const agent = jarvisHandle?.agent ?? jarvisHandle;
+            live.userSent();
             if (typeof agent?.followup === 'function') {
               agent.followup(msg);
               debug(entry, '/jarvis/input: followup() — "' + text.slice(0, 60) + '"' + (session ? ' → ' + session : ''));
@@ -617,6 +638,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // ── 挂点1: global listeners (worker events, filtered to managed) ──────
   ctx.on('session/event' as any, (session: { id?: string } | undefined, event: { type?: string; data?: any }) => {
     const sid = typeof session?.id === 'string' ? session.id : undefined;
+    if (sid) {
+      if (event?.type === 'turn/start') live.turnStarted(sid);
+      else if (event?.type === 'turn/end') live.turnEnded(sid, event.data?.reason);
+      else if (event?.type === 'user/message' && event.data?.source === 'user') live.markRead(sid);
+    }
     // Jarvis agent's own turn/end → re-set title (DSH auto-title overwrites it)
     if (sid === entry.jarvisSessionId && event?.type === 'turn/end') {
       trySetTitle(titleService, entry, '贾维斯');
@@ -648,18 +674,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     // TODO §13/§8: judge continuation → steer
   });
 
-  // ── approval answerer stub (§11) ─────────────────────────────────────
-  const approval = (ctx as any).get?.('approval') as
-    | { register?: (a: unknown) => () => void }
-    | undefined;
-  if (approval?.register) {
-    const dispose = approval.register({
-      async answer(_req: unknown): Promise<{ kind: 'allow' } | { kind: 'deny'; reason: string }> {
-        throw new Error('TODO §11: relay approval via userQuestions');
-      },
-    });
-    void dispose;
-  }
+  // ── approvals / questions relayed to the悬浮窗 (§11) ──────────────────
+  // Prepended so the panel races the DSH window; whichever answers first wins.
+  ctx.on('approval/request' as any, (req: any, next: () => Promise<any>) =>
+    live.holdApproval(req, next, approvalCommand(req)), { prepend: true } as any);
+  ctx.on('user-questions/request' as any, (req: any, next: () => Promise<any>) =>
+    live.holdAsk(req, next), { prepend: true } as any);
 
   // ── built-in TTS + voice:tts detect (§5) ─────────────────────────────
   const builtInTts = makeBuiltInTTS(entry.edgeVoice);
@@ -806,6 +826,55 @@ function readVoiceMiniRuntime(): { token?: string; rendererHeader?: { name: stri
     if (!existsSync(f)) return null;
     return JSON.parse(readFileSync(f, 'utf8'));
   } catch { return null; }
+}
+
+/** voice-mini narrates Jarvis (and every other session), so its playback is
+ *  what the user hears as "Jarvis speaking". Cached briefly: /jarvis/state is
+ *  polled every second and this is a same-host round trip. */
+const voiceMiniCache = { at: 0, value: { speaking: false, queued: 0 } };
+async function voiceMiniSpeech(origin: string | null): Promise<{ speaking: boolean; queued: number }> {
+  if (!origin || Date.now() - voiceMiniCache.at < 400) return voiceMiniCache.value;
+  voiceMiniCache.at = Date.now();
+  const vm = readVoiceMiniRuntime();
+  if (!vm?.token) { voiceMiniCache.value = { speaking: false, queued: 0 }; return voiceMiniCache.value; }
+  try {
+    const r = await fetch(origin + '/voice-mini/pet/state', {
+      headers: { Authorization: `Bearer ${vm.token}` },
+      signal: AbortSignal.timeout(300),
+    });
+    const body = r.ok ? await r.json() as { speaking?: unknown; queued?: unknown } : {};
+    voiceMiniCache.value = { speaking: body.speaking === true, queued: typeof body.queued === 'number' ? body.queued : 0 };
+  } catch { /* keep the last value; voice-mini may be busy or absent */ }
+  return voiceMiniCache.value;
+}
+
+/** `running` per the agents service, or undefined when it can't tell. */
+function agentRunning(ctx: Context, id: string): boolean | undefined {
+  try {
+    const a = (ctx as any).get?.('agents')?.get?.(id);
+    const status = a?.status ?? a?.agent?.status;
+    return typeof status === 'string' ? status === 'running' : undefined;
+  } catch { return undefined; }
+}
+
+/** The command an approval is about, pulled from the asking agent's pending tool call. */
+function approvalCommand(req: { agent?: any; callId?: unknown }): string | undefined {
+  if (req.callId === undefined) return undefined;
+  try {
+    const msgs: any[] = req.agent?.session?.deriveMessages?.() ?? [];
+    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 4); i--) {
+      for (const b of msgs[i]?.content ?? []) {
+        if ((b?.type !== 'toolCall' && b?.type !== 'tool_call') || b?.id !== req.callId) continue;
+        let args: any = b.arguments ?? b.input;
+        if (typeof args === 'string') { try { args = JSON.parse(args); } catch { return args.slice(0, 300); } }
+        const text = typeof args?.command === 'string' ? args.command
+          : typeof args?.path === 'string' ? args.path
+            : JSON.stringify(args ?? '');
+        return text.slice(0, 300);
+      }
+    }
+  } catch {}
+  return undefined;
 }
 
 /** Try to set the Jarvis session title (DSH auto-title overwrites it after each turn). */

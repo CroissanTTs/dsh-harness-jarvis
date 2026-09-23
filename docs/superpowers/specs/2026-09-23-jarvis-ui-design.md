@@ -78,12 +78,12 @@
 - 隐藏时渲染停止（0fps），显示时恢复。
 - 调度中心：窗口 `collectionBehavior` 改为 `[.canJoinAllSpaces, .transient, .fullScreenAuxiliary]`，由系统负责隐藏。
 - 全屏检测：前台应用、Space 切换、以及定时轮询时检查。判定依据是 `CGWindowList` 中存在属于前台应用、layer 0、铺满当前屏幕的窗口。要排除 DSH 自己的截图遮罩等覆盖层。
-- 应用程序启动器检测（spike 结论见 §11）：`CGWindowList` 中出现属于 Spotlight（`com.apple.Spotlight`）、或属于 Dock 且 layer > 0 的大面积可见窗口即视为启动器打开（调度中心同样命中，行为一致）。切换结果写入 `panel-debug.log`，便于调优。
+- 应用程序启动器检测（spike 结论见 §11）：`CGWindowList` 中出现属于 Spotlight（`com.apple.Spotlight`）且 layer > 0 的大面积可见窗口即视为启动器打开。Dock 进程的全屏窗口不作为信号：显示桌面、切换空间时它也会出现，会把形象误藏。切换结果写入 `panel-debug.log`，便于调优。
 
 ## 4. 拖拽与吸附
 
 - 拖动阈值 4pt；松手时离边缘 30pt 以内吸附。共 8 个吸附位（4 角 + 4 边），距离相同时角优先。
-- 只在当前屏幕的可见区域内活动：不压菜单栏、刘海、Dock。
+- 只在当前屏幕的可见区域内活动：不压菜单栏、刘海、Dock。Dock 只挡住它实际占的那一段（按图标数估算长度），同一条边上 Dock 以外的角落仍可吸附。
 - 位置按显示器分别记忆；显示器不在时回退到主屏右上角。
 - **贴边收起（B 方案）**：吸附后形象化为贴边的一条粒子细带（边上约 5pt 宽、96pt 长；角落是两边各 78pt 的 L 形）。状态在细带上同样可见：琥珀色脉冲、说话时细带厚度呼吸、出错红色闪烁。
 - 鼠标移到细带上，完整形象滑出；离开 0.4s 后收回。
@@ -246,7 +246,7 @@ UI 需要的数据以一个快照接口提供。本版 host 能拿到的真实�
 
 | 风险 | 处理 |
 |---|---|
-| 应用程序启动器（macOS 26）没有公开的检测接口 | 已 spike：`/System/Applications/Apps.app` 打开时出现 Spotlight（聚焦）进程的窗口；旧日志中另有 Dock（程序坞）全屏窗口。两者都作为信号，锁屏时未能完成全屏形态的确认，解锁后需实测 |
+| 应用程序启动器（macOS 26）没有公开的检测接口 | 已 spike：`/System/Applications/Apps.app` 打开时出现 Spotlight（聚焦）进程的窗口；旧日志中另有 Dock（程序坞）全屏窗口，但它在显示桌面时也会出现、导致形象在桌面上被误藏，已移除，只保留 Spotlight 信号 |
 | 全屏误判（截图遮罩、无边框全屏窗口） | 排除表 + 仅判 layer 0 + 必须属于前台应用 |
 | 透明区域点击穿透 | OverlayPanel 只覆盖内容实际尺寸；形象窗口按鼠标是否在粒子圆内切换 `ignoresMouseEvents` |
 | 非激活面板里的文字输入 | 沿用现有 `canBecomeKey` 做法，spike 验证输入法（中文 IME）候选窗位置正确 |

@@ -1,10 +1,10 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// 贾维斯悬浮窗 — native SwiftUI/AppKit NSPanel (mirrors dsh-notch/macos).
-// Reads ~/.dsh/jarvis/runtime.json (origin+token) and polls the host plugin's
-// /jarvis/* routes. Built as an executable; launched standalone for MVP (host
-// auto-spawn is a follow-up).
+// 贾维斯悬浮窗 — native AppKit/SwiftUI/Metal panel.
+// JarvisPanelCore holds all AppKit-free logic (models, view model, particle
+// simulation, layout, visibility rules) so it can be unit-tested; JarvisPanel
+// is the executable (windows, rendering, system observers, views).
 let package = Package(
   name: "JarvisPanel",
   platforms: [.macOS(.v14)],
@@ -12,6 +12,22 @@ let package = Package(
     .executable(name: "jarvis-panel", targets: ["JarvisPanel"]),
   ],
   targets: [
-    .executableTarget(name: "JarvisPanel", path: "Sources"),
+    .target(
+      name: "JarvisPanelCore",
+      path: "Sources/JarvisPanelCore",
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
+    .executableTarget(
+      name: "JarvisPanel",
+      dependencies: ["JarvisPanelCore"],
+      path: "Sources/JarvisPanel",
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
+    .testTarget(
+      name: "JarvisPanelCoreTests",
+      dependencies: ["JarvisPanelCore"],
+      path: "Tests/JarvisPanelCoreTests",
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
   ]
 )

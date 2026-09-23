@@ -37,6 +37,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
@@ -56,6 +57,68 @@ let jarvisHandle: any = null;
 /** Wall-clock ms until which Jarvis is "speaking" (a TTS greeting is in flight).
  *  The悬浮窗 polls /jarvis/state and pulses the orb while speaking is true. */
 let speakingUntil = 0;
+
+/** Set from the悬浮窗 voice button; suppresses greetings until unmuted. */
+let voiceMuted = false;
+let playingChild: ChildProcess | null = null;
+
+/** Session titles for /jarvis/state, refreshed at most every 10s. */
+const titleCache: { at: number; map: Record<string, string> } = { at: 0, map: {} };
+
+/** Stops the built-in afplay playback. voice-mini playback is out of our reach. */
+function stopSpeech(): void {
+  speakingUntil = 0;
+  if (playingChild && !playingChild.killed) { try { playingChild.kill('SIGTERM'); } catch {} }
+  playingChild = null;
+}
+
+/** Worker session ids from the agents registry, excluding Jarvis itself (the
+ *  registry keys it by its DSH UUID, so also match the live handle's id). */
+function listWorkerIds(ctx: Context, entry: JarvisConfig): string[] {
+  const agents = (ctx as any).get?.('agents');
+  let ids: string[] = [];
+  if (agents) {
+    const pick = (a: any) => typeof a === 'string' ? a : (a?.id ?? a?.sessionId ?? '');
+    if (typeof agents.keys === 'function') ids = [...agents.keys()];
+    else if (typeof agents.list === 'function') ids = agents.list().map(pick);
+    else if (typeof agents[Symbol.iterator] === 'function') ids = [...agents].map(pick);
+  }
+  const selfAgentId = String(jarvisHandle?.agent?.id ?? '');
+  return ids.map(String).filter((id) => id && id !== entry.jarvisSessionId && (selfAgentId === '' || id !== selfAgentId));
+}
+
+/** Batch-reads titles via sessionQuery.readTitleSnapshots.
+ *  Actual shape: [{ sessionId, status, value: { session, title: { title } } }] */
+async function readTitleMap(ctx: Context, ids: string[]): Promise<{ map: Record<string, string>; diag: string }> {
+  const map: Record<string, string> = {};
+  try {
+    const sessionQuery = (ctx as any).get?.('sessionQuery');
+    if (!sessionQuery?.readTitleSnapshots || ids.length === 0) {
+      return { map, diag: 'sq=' + (sessionQuery ? 'found' : 'missing') + ' rts=' + (sessionQuery?.readTitleSnapshots ? 'fn' : 'no') + ' ids=' + ids.length };
+    }
+    const snaps = await sessionQuery.readTitleSnapshots(ids);
+    if (Array.isArray(snaps)) {
+      snaps.forEach((s: any, i: number) => {
+        const sid = String(s?.sessionId ?? s?.id ?? ids[i] ?? '');
+        const t = String(s?.value?.title?.title ?? s?.value?.title ?? s?.title?.title ?? s?.title ?? '');
+        if (sid && t) map[sid] = t;
+      });
+      return { map, diag: 'array[' + snaps.length + '] titles=' + Object.values(map).join(' | ').slice(0, 200) };
+    }
+    if (snaps && typeof snaps === 'object') {
+      for (const [k, v] of Object.entries(snaps as any)) {
+        map[String(k)] = String((v as any)?.value?.title?.title ?? (v as any)?.title?.title ?? (v as any)?.title ?? '');
+      }
+      return { map, diag: 'object[' + Object.keys(snaps).length + ']' };
+    }
+    return { map, diag: '(empty)' };
+  } catch (e) {
+    return { map, diag: 'err: ' + (e instanceof Error ? e.message : String(e)) };
+  }
+}
+
+/** /jarvis/input wraps session-targeted text in this instruction; history shows the original. */
+const ROUTED_INPUT = /^用户要求把以下内容发给会话 (\S+)。请优化说法后用 inject_to_session 发送：\n\n([\s\S]*)$/;
 
 export const name = 'dsh-harness-jarvis';
 
@@ -147,8 +210,10 @@ function makeBuiltInTTS(voice: string) {
     play(file: string): Promise<void> {
       return new Promise((res) => {
         const p = spawn('afplay', [file], { stdio: 'ignore' });
-        p.on('close', () => res());
-        p.on('error', () => res());
+        playingChild = p;
+        const done = () => { if (playingChild === p) playingChild = null; res(); };
+        p.on('close', done);
+        p.on('error', done);
       });
     },
   };
@@ -287,7 +352,47 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         if (!isLoopbackReq(req) || !isAuthorized(req, token)) { sendJson(res, 403, { error: 'forbidden' }); return; }
         const url = (req.url ?? '').replace(/^\/jarvis/, '').split('?')[0] ?? '/';
         try {
-          if (url === '/state' && req.method === 'GET') { sendJson(res, 200, { agentId: entry.jarvisSessionId, managed: [...managed], speaking: Date.now() < speakingUntil }); return; }
+          if (url === '/state' && req.method === 'GET') {
+            const speaking = Date.now() < speakingUntil;
+            const ids = listWorkerIds(ctx, entry);
+            if (Date.now() - titleCache.at > 10_000 || ids.some((id) => !(id in titleCache.map))) {
+              titleCache.map = (await readTitleMap(ctx, ids)).map;
+              titleCache.at = Date.now();
+            }
+            const sessions = ids.map((id) => ({
+              id, title: titleCache.map[id] || '', status: managed.has(id) ? 'running' : 'idle', unread: false,
+            }));
+            sendJson(res, 200, {
+              agentId: entry.jarvisSessionId,
+              managed: [...managed],
+              speaking,
+              activity: speaking ? 'speaking' : 'idle',
+              error: null,
+              voice: { speaking, muted: voiceMuted },
+              counts: { running: managed.size, pending: 0, unread: 0, failed: 0 },
+              sessions,
+              pending: [],
+            });
+            return;
+          }
+          if (url === '/pending/answer' && req.method === 'POST') { sendJson(res, 404, { error: 'not found' }); return; }
+          if (url === '/voice' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            if (body.action === 'mute') { voiceMuted = true; stopSpeech(); }
+            else if (body.action === 'unmute') voiceMuted = false;
+            else if (body.action === 'pause') stopSpeech();
+            else { sendJson(res, 400, { error: 'unknown action' }); return; }
+            debug(entry, '/jarvis/voice: ' + String(body.action));
+            res.statusCode = 204; res.end(); return;
+          }
+          if (url === '/read' && req.method === 'POST') { res.statusCode = 204; res.end(); return; }
+          if (url === '/open' && req.method === 'POST') {
+            // The host runs inside DSH, so its own .app bundle is the one to raise (covers Beta builds).
+            const app = /^(.*?\.app)\//.exec(process.execPath)?.[1];
+            const args = app ? [app] : ['-b', 'ai.deepseek.dsh.desktop'];
+            try { spawn('open', args, { stdio: 'ignore' }).on('error', () => {}); } catch {}
+            res.statusCode = 204; res.end(); return;
+          }
           if (url === '/providers' && req.method === 'GET') {
             const a = (llm as any)?.adapters; sendJson(res, 200, { providers: a instanceof Map ? [...a.keys()] : [] }); return;
           }
@@ -302,47 +407,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           if (url === '/sessions' && req.method === 'GET') { sendJson(res, 200, { managed: [...managed], monitoring: [] }); return; }
           if (url === '/agents' && req.method === 'GET') {
             // List all available agents/sessions (so the user/Jarvis knows which
-            // sessions can be targeted by inject_to_session). Titles come from
-            // the official sessionQuery.readTitleSnapshots(ids).
+            // sessions can be targeted by inject_to_session).
             try {
               const agents = (ctx as any).get?.('agents');
-              let ids: string[] = [];
-              if (agents) {
-                if (typeof agents.keys === 'function') ids = [...agents.keys()];
-                else if (typeof agents.list === 'function') ids = agents.list().map((a: any) => typeof a === 'string' ? a : (a?.id ?? a?.sessionId ?? ''));
-                else if (typeof agents[Symbol.iterator] === 'function') ids = [...agents].map((a: any) => typeof a === 'string' ? a : (a?.id ?? a?.sessionId ?? ''));
-              }
-              // Filter out Jarvis's own session — the agents registry keys it by
-              // its DSH UUID (session-xxx), not by our logical "jarvis" id, so
-              // also match via the live agent handle's id.
-              const selfAgentId = String(jarvisHandle?.agent?.id ?? '');
-              ids = ids.filter((id: string) => id !== entry.jarvisSessionId && (selfAgentId === '' || id !== selfAgentId));
-              // Batch-read titles via the official sessionQuery service.
-              // Actual shape: [{ sessionId, status, value: { session, title: { title } } }]
-              let titleMap: Record<string, string> = {};
-              let snapsDiag = '(skipped)';
-              try {
-                const sessionQuery = (ctx as any).get?.('sessionQuery');
-                if (sessionQuery?.readTitleSnapshots && ids.length > 0) {
-                  const snaps = await sessionQuery.readTitleSnapshots(ids);
-                  if (Array.isArray(snaps)) {
-                    snaps.forEach((s: any, i: number) => {
-                      const sid = String(s?.sessionId ?? s?.id ?? ids[i] ?? '');
-                      // Title lives at s.value.title.title (nested two levels).
-                      const t = String(s?.value?.title?.title ?? s?.value?.title ?? s?.title?.title ?? s?.title ?? '');
-                      if (sid && t) titleMap[sid] = t;
-                    });
-                    snapsDiag = 'array[' + snaps.length + '] titles=' + Object.values(titleMap).join(' | ').slice(0, 200);
-                  } else if (snaps && typeof snaps === 'object') {
-                    for (const [k, v] of Object.entries(snaps as any)) {
-                      titleMap[String(k)] = String((v as any)?.value?.title?.title ?? (v as any)?.title?.title ?? (v as any)?.title ?? '');
-                    }
-                    snapsDiag = 'object[' + Object.keys(snaps).length + ']';
-                  }
-                } else {
-                  snapsDiag = 'sq=' + (sessionQuery ? 'found' : 'missing') + ' rts=' + (sessionQuery?.readTitleSnapshots ? 'fn' : 'no') + ' ids=' + ids.length;
-                }
-              } catch (e) { snapsDiag = 'err: ' + (e instanceof Error ? e.message : String(e)); debug(entry, '/agents: ' + snapsDiag); }
+              const ids = listWorkerIds(ctx, entry);
+              const { map: titleMap, diag: snapsDiag } = await readTitleMap(ctx, ids);
+              if (snapsDiag.startsWith('err')) debug(entry, '/agents: ' + snapsDiag);
               const result = ids.map((id: string) => {
                 try {
                   const a = agents?.get?.(id);
@@ -370,23 +440,35 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
                   msgs = events.map((ev: any) => { try { return s.deriveEventMessage?.(ev); } catch { return null; } }).filter(Boolean);
                 } catch (e2) { debug(entry, '/messages: snapshot err: ' + (e2 instanceof Error ? e2.message : String(e2))); }
               }
-              const conv = msgs.map((m: any) => {
+              const conv = msgs.map((m: any, index: number) => {
                 const textParts: string[] = [];
                 const toolCalls: any[] = [];
+                let routedTo: string | undefined;
                 if (Array.isArray(m?.content)) {
                   for (const b of m.content) {
                     if (b?.type === 'text') textParts.push(String(b.text));
                     if (b?.type === 'toolCall' || b?.type === 'tool_call') {
-                      toolCalls.push({ name: String(b?.name ?? '?'), args: String(b?.arguments ?? b?.input ?? '').slice(0, 200) });
+                      const raw = b?.arguments ?? b?.input;
+                      let args: any = raw;
+                      if (typeof raw === 'string') { try { args = JSON.parse(raw); } catch { args = undefined; } }
+                      if (b?.name === 'inject_to_session' && typeof args?.session === 'string') routedTo = args.session;
+                      toolCalls.push({ name: String(b?.name ?? '?'), args: (typeof raw === 'string' ? raw : JSON.stringify(raw ?? '')).slice(0, 200) });
                     }
                   }
                 }
+                const role = String(m?.role ?? '?');
+                let text = textParts.join('');
+                const routed = role === 'user' ? ROUTED_INPUT.exec(text) : null;
+                if (routed) { routedTo = routed[1]; text = routed[2] ?? ''; }
                 return {
-                  role: String(m?.role ?? '?'),
-                  text: textParts.join(''),
+                  id: String(m?.id ?? 'm' + index),
+                  role,
+                  text,
+                  routedTo,
                   toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
                 };
-              }).filter((m: any) => m.text.length > 0 || (m.toolCalls && m.toolCalls.length > 0));
+              }).filter((m: any) => (m.role === 'user' || m.role === 'assistant')
+                && (m.text.length > 0 || (m.toolCalls && m.toolCalls.length > 0)));
               sendJson(res, 200, { messages: conv.slice(-20), count: conv.length });
             } catch (e) { sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) }); }
             return;
@@ -651,6 +733,7 @@ async function speakGreeting(
   tts: { synthesize: (text: string, outFile: string) => Promise<unknown>; play: (file: string) => unknown },
   entry: JarvisConfig,
 ): Promise<void> {
+  if (voiceMuted) { debug(entry, 'speakGreeting: muted, skipped'); return; }
   const text = pickGreeting(entry);
   debug(entry, 'speakGreeting: picked "' + text + '"');
   speakingUntil = Date.now() + 6000; // orb pulses for ~6s while the greeting speaks

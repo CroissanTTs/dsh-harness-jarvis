@@ -163,6 +163,34 @@ public enum Placement {
     return (o, dock)
   }
 
+  /// Screen rects where hovering a collapsed strip slides the orb out.
+  public static func stripRects(frame f: CGRect, edge: DockEdge) -> [CGRect] {
+    let t: CGFloat = 22, span: CGFloat = 120, arm: CGFloat = 100
+    switch edge {
+    case .right: return [CGRect(x: f.maxX - t, y: f.midY - span / 2, width: t, height: span)]
+    case .left: return [CGRect(x: f.minX, y: f.midY - span / 2, width: t, height: span)]
+    case .top: return [CGRect(x: f.midX - span / 2, y: f.maxY - t, width: span, height: t)]
+    case .bottom: return [CGRect(x: f.midX - span / 2, y: f.minY, width: span, height: t)]
+    case .topRight: return [CGRect(x: f.maxX - t, y: f.maxY - arm, width: t, height: arm),
+                            CGRect(x: f.maxX - arm, y: f.maxY - t, width: arm, height: t)]
+    case .topLeft: return [CGRect(x: f.minX, y: f.maxY - arm, width: t, height: arm),
+                           CGRect(x: f.minX, y: f.maxY - t, width: arm, height: t)]
+    case .bottomRight: return [CGRect(x: f.maxX - t, y: f.minY, width: t, height: arm),
+                               CGRect(x: f.maxX - arm, y: f.minY, width: arm, height: t)]
+    case .bottomLeft: return [CGRect(x: f.minX, y: f.minY, width: t, height: arm),
+                              CGRect(x: f.minX, y: f.minY, width: arm, height: t)]
+    }
+  }
+
+  /// Whether the cursor is on the orb window's live area. An opened strip keeps
+  /// its collapsed area as well, so a cursor resting on the strip (outside the
+  /// orb circle) doesn't make it collapse and reopen over and over.
+  public static func overOrb(_ p: CGPoint, frame: CGRect, strip: DockEdge?, stripOpen: Bool) -> Bool {
+    let onStrip = strip.map { edge in stripRects(frame: frame, edge: edge).contains { $0.contains(p) } } ?? false
+    if strip != nil && !stripOpen { return onStrip }
+    return hypot(p.x - frame.midX, p.y - frame.midY) <= orbRadius || onStrip
+  }
+
   /// Interior side: the one with more horizontal room (ties go left).
   public static func interiorSide(center: CGPoint, visible: CGRect) -> HSide {
     (visible.maxX - center.x) > (center.x - visible.minX) ? .right : .left

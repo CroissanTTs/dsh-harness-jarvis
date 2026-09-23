@@ -228,26 +228,6 @@ final class AppController: NSObject {
     }
   }
 
-  /// Screen rects where hovering a collapsed strip slides the orb out.
-  private func stripRects(_ edge: DockEdge) -> [CGRect] {
-    let f = orb.frame
-    let t: CGFloat = 22, span: CGFloat = 120, arm: CGFloat = 100
-    switch edge {
-    case .right: return [CGRect(x: f.maxX - t, y: f.midY - span / 2, width: t, height: span)]
-    case .left: return [CGRect(x: f.minX, y: f.midY - span / 2, width: t, height: span)]
-    case .top: return [CGRect(x: f.midX - span / 2, y: f.maxY - t, width: span, height: t)]
-    case .bottom: return [CGRect(x: f.midX - span / 2, y: f.minY, width: span, height: t)]
-    case .topRight: return [CGRect(x: f.maxX - t, y: f.maxY - arm, width: t, height: arm),
-                            CGRect(x: f.maxX - arm, y: f.maxY - t, width: arm, height: t)]
-    case .topLeft: return [CGRect(x: f.minX, y: f.maxY - arm, width: t, height: arm),
-                           CGRect(x: f.minX, y: f.maxY - t, width: arm, height: t)]
-    case .bottomRight: return [CGRect(x: f.maxX - t, y: f.minY, width: t, height: arm),
-                               CGRect(x: f.maxX - arm, y: f.minY, width: arm, height: t)]
-    case .bottomLeft: return [CGRect(x: f.minX, y: f.minY, width: t, height: arm),
-                              CGRect(x: f.minX, y: f.minY, width: arm, height: t)]
-    }
-  }
-
   // MARK: Position memory
 
   private func restorePosition() {
@@ -316,9 +296,7 @@ final class AppController: NSObject {
   }
 
   private func overOrb(_ p: CGPoint) -> Bool {
-    if let edge = stripEdge, !stripOpen { return stripRects(edge).contains { $0.contains(p) } }
-    let c = orb.center
-    return hypot(p.x - c.x, p.y - c.y) <= Placement.orbRadius
+    Placement.overOrb(p, frame: orb.frame, strip: stripEdge, stripOpen: stripOpen)
   }
 
   private func trackMouse() {
@@ -521,7 +499,8 @@ final class AppController: NSObject {
   }
 
   /// The overlay spans a large area; ordering it out while empty releases its
-  /// backing surfaces.
+  /// backing surfaces. The delay keeps it alive across quick re-hovers, which
+  /// would otherwise rebuild those surfaces every time.
   private func updateOverlayPresence() {
     overlayHideWork?.cancel()
     overlayHideWork = nil
@@ -535,7 +514,7 @@ final class AppController: NSObject {
         overlayState.hitRects = []
       }
       overlayHideWork = work
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
   }
 

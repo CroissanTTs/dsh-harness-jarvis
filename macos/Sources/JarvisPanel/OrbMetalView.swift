@@ -109,6 +109,29 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
 
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+  /// `nextDrawable` blocks the main thread for up to 1s while the window can't
+  /// be shown (occluded, mid space switch, display asleep), so drawing stops then.
+  private var onScreen = true
+  private var occlusionToken: NSObjectProtocol?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if let occlusionToken { NotificationCenter.default.removeObserver(occlusionToken) }
+    occlusionToken = nil
+    guard let window else { return }
+    occlusionToken = NotificationCenter.default.addObserver(
+      forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, let window = self.window else { return }
+        self.onScreen = window.occlusionState.contains(.visible)
+        self.updatePacing()
+      }
+    }
+    onScreen = window.occlusionState.contains(.visible)
+    updatePacing()
+  }
+
   /// Simulated time added by `advance(seconds:)` for offscreen snapshots.
   private var virtualOffset: Double = 0
   private var now: Double { CACurrentMediaTime() - start + virtualOffset }
@@ -143,7 +166,10 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
   // MARK: Control
 
   func apply(motion: OrbMotion, tint: OrbTint) {
-    if motion != sim.motion { sim.setMotion(motion, t: now) }
+    if motion != sim.motion {
+      sim.setMotion(motion, t: now)
+      beginTransition()
+    }
     let target = tint.simd
     if target != toColor {
       fromColor = currentColor()
@@ -154,11 +180,23 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
   }
 
   func setDock(_ edge: DockEdge?) {
+    guard edge != sim.dock else { return }
     sim.setDock(edge, t: now)
+    beginTransition()
   }
 
   func setCount(_ n: Int) {
+    guard n != sim.count else { return }
     sim.setCount(n, t: now)
+    beginTransition()
+  }
+
+  private var transitionUntil: Double = -1
+  private var transitioning = false
+
+  private func beginTransition() {
+    transitionUntil = now + FramePacing.transitionSeconds
+    updatePacing()
   }
 
   func setReduceMotion(_ on: Bool) {
@@ -173,12 +211,10 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
   }
 
   private func updatePacing() {
-    isPaused = !rendering
-    if sim.dock != nil {
-      preferredFramesPerSecond = 20
-    } else {
-      preferredFramesPerSecond = sim.motion == .idle ? 30 : 60
-    }
+    isPaused = !rendering || !onScreen
+    transitioning = now < transitionUntil
+    let fps = FramePacing.fps(docked: sim.dock != nil, motion: sim.motion, transitioning: transitioning)
+    if preferredFramesPerSecond != fps { preferredFramesPerSecond = fps }
   }
 
   // MARK: MTKViewDelegate
@@ -201,6 +237,7 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
     sim.step(t: t, dt: dt)
     sim.sprites(t: t, into: &sprites)
     underlay += ((sim.dock == nil ? 1 : 0) - underlay) * Float(min(1, dt * 8))
+    if transitioning && t >= transitionUntil { updatePacing() }
   }
 
   /// Steps the simulation through `seconds` of virtual time at 60 fps.

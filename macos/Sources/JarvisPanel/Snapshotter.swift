@@ -46,6 +46,7 @@ final class Snapshotter {
       Scene(name: "10-corner-topright-hover", demo: 0, origin: CGPoint(x: v.maxX - 140, y: v.maxY - 140), hover: true),
       Scene(name: "11-corner-topright-strip", demo: 3, origin: CGPoint(x: v.maxX - 140, y: v.maxY - 140)),
       Scene(name: "12-bottomleft-quickbar", demo: 0, origin: CGPoint(x: v.minX + 40, y: v.minY + 40), quick: true),
+      Scene(name: "13-corner-topright-speaking-hover", demo: 3, origin: CGPoint(x: v.maxX - 140, y: v.maxY - 140), hover: true),
     ]
     let (orb, _, model) = controller.snapshotParts
     for scene in scenes {

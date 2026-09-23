@@ -109,7 +109,9 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
 
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-  private var now: Double { CACurrentMediaTime() - start }
+  /// Simulated time added by `advance(seconds:)` for offscreen snapshots.
+  private var virtualOffset: Double = 0
+  private var now: Double { CACurrentMediaTime() - start + virtualOffset }
 
   private func buildPipelines() {
     guard let device else { return }
@@ -180,23 +182,73 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
   func draw(in view: MTKView) {
+    tick()
+    guard let queue, let pass = currentRenderPassDescriptor, let drawable = currentDrawable,
+          let cmd = queue.makeCommandBuffer() else { return }
+    encode(cmd, pass)
+    cmd.present(drawable)
+    cmd.commit()
+  }
+
+  private func tick() {
     let t = now
     let dt = min(max(t - last, 0), 1.0 / 20)
     last = t
     sim.step(t: t, dt: dt)
     sim.sprites(t: t, into: &sprites)
     underlay += ((sim.dock == nil ? 1 : 0) - underlay) * Float(min(1, dt * 8))
+  }
 
-    guard let device, let queue, let particlePipeline, let underlayPipeline,
-          let pass = currentRenderPassDescriptor, let drawable = currentDrawable,
-          let cmd = queue.makeCommandBuffer(),
+  /// Steps the simulation through `seconds` of virtual time at 60 fps.
+  func advance(seconds: Double) {
+    for _ in 0..<Int(seconds * 60) {
+      virtualOffset += 1.0 / 60
+      tick()
+    }
+  }
+
+  /// Renders the current frame offscreen, for `JARVIS_SNAPSHOT`.
+  func snapshot(scale: CGFloat) -> CGImage? {
+    guard let device, let queue, let cmd = queue.makeCommandBuffer() else { return nil }
+    let px = Int(bounds.width * scale)
+    let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat, width: px, height: px,
+                                                        mipmapped: false)
+    desc.usage = [.renderTarget, .shaderRead]
+    desc.storageMode = device.hasUnifiedMemory ? .shared : .managed
+    guard let texture = device.makeTexture(descriptor: desc) else { return nil }
+    let pass = MTLRenderPassDescriptor()
+    pass.colorAttachments[0].texture = texture
+    pass.colorAttachments[0].loadAction = .clear
+    pass.colorAttachments[0].storeAction = .store
+    pass.colorAttachments[0].clearColor = clearColor
+    encode(cmd, pass)
+    if desc.storageMode == .managed, let blit = cmd.makeBlitCommandEncoder() {
+      blit.synchronize(resource: texture)
+      blit.endEncoding()
+    }
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    var bytes = [UInt8](repeating: 0, count: px * px * 4)
+    texture.getBytes(&bytes, bytesPerRow: px * 4, from: MTLRegionMake2D(0, 0, px, px), mipmapLevel: 0)
+    let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+    return CGImage(width: px, height: px, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: px * 4,
+                   space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info, provider: provider,
+                   decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+  }
+
+  private func encode(_ cmd: MTLCommandBuffer, _ pass: MTLRenderPassDescriptor) {
+    guard let device, let particlePipeline, let underlayPipeline,
           let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
 
     let bytes = max(1, sprites.count) * MemoryLayout<PointSprite>.stride
     if instanceBuffer == nil || instanceBuffer!.length < bytes {
       instanceBuffer = device.makeBuffer(length: bytes * 2, options: .storageModeShared)
     }
-    guard let instanceBuffer else { return }
+    guard let instanceBuffer else {
+      enc.endEncoding()
+      return
+    }
     sprites.withUnsafeBytes { raw in
       if let base = raw.baseAddress { instanceBuffer.contents().copyMemory(from: base, byteCount: raw.count) }
     }
@@ -214,8 +266,6 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
       enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: sprites.count)
     }
     enc.endEncoding()
-    cmd.present(drawable)
-    cmd.commit()
   }
 }
 

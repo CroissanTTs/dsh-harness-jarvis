@@ -6,8 +6,10 @@ import JarvisPanelCore
 /// Wires the orb window, the overlay, the model and the system observer.
 @MainActor
 final class AppController: NSObject {
-  private let store = SettingsStore()
+  private let store: SettingsStore
   private let model: PanelModel
+  private let demo: DemoAPI?
+  private let snapshotDir: URL?
   private let overlayState = OverlayState()
   private let observer = SystemObserver()
   private let orb: OrbPanel
@@ -31,8 +33,11 @@ final class AppController: NSObject {
   private var pollTask: Task<Void, Never>?
 
   override init() {
-    let demo = ProcessInfo.processInfo.environment["JARVIS_DEMO"] == "1"
-    let api: JarvisAPI = demo ? DemoAPI() : JarvisClient()
+    let env = ProcessInfo.processInfo.environment
+    snapshotDir = env["JARVIS_SNAPSHOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    store = snapshotDir.map { SettingsStore(url: $0.appendingPathComponent("panel.json")) } ?? SettingsStore()
+    demo = env["JARVIS_DEMO"] == "1" || snapshotDir != nil ? DemoAPI() : nil
+    let api: JarvisAPI = demo ?? JarvisClient()
     model = PanelModel(api: api, store: store)
     orb = OrbPanel(count: store.settings.tier.count)
     super.init()
@@ -41,7 +46,7 @@ final class AppController: NSObject {
       onVoice: { [weak self] in self?.pressVoice() },
       onHistory: { [weak self] in self?.openHistory() },
       onClose: { [weak self] in self?.model.closeQuickBar() }))
-    if demo { Log.write("demo mode") }
+    if demo != nil { Log.write("demo mode") }
   }
 
   private var stripEdge: DockEdge? {
@@ -62,6 +67,15 @@ final class AppController: NSObject {
     orb.onRightClick = { [weak self] in self?.showMenu($0) }
     overlay.onCommandDigit = { [weak self] in self?.model.selectTarget(number: $0) }
 
+    model.objectWillChange
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] _ in self?.modelChanged() }
+      .store(in: &cancellables)
+    if let snapshotDir, let demo {
+      Task { await Snapshotter(controller: self, demo: demo, dir: snapshotDir).run() }
+      return
+    }
+
     installMonitors()
     observer.screen = { [weak self] in self?.currentScreen }
     observer.onChange = { [weak self] in
@@ -71,10 +85,6 @@ final class AppController: NSObject {
     }
     observer.start()
 
-    model.objectWillChange
-      .receive(on: DispatchQueue.main)
-      .sink { [weak self] _ in self?.modelChanged() }
-      .store(in: &cancellables)
     NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                            object: nil, queue: .main) { [weak self] _ in
       MainActor.assumeIsolated { self?.screensChanged() }
@@ -286,7 +296,7 @@ final class AppController: NSObject {
   }
 
   private func trackMouse() {
-    guard !hidden, !dragging else { return }
+    guard !hidden, !dragging, snapshotDir == nil else { return }
     let p = NSEvent.mouseLocation
     let onOrb = overOrb(p)
     let onOverlay = overlayState.hits(p)
@@ -532,5 +542,31 @@ final class AppController: NSObject {
 
   @objc private func quit() {
     NSApp.terminate(nil)
+  }
+}
+
+// MARK: Snapshot hooks
+
+extension AppController {
+  var snapshotParts: (orb: OrbPanel, overlay: OverlayPanel, model: PanelModel) { (orb, overlay, model) }
+
+  func snapshotPlace(_ origin: CGPoint) {
+    guard let screen = NSScreen.main else { return }
+    var frame = orb.frame
+    frame.origin = origin
+    let result = Placement.snap(frame: frame, visible: screen.visibleFrame, notchX: Self.notchX(screen))
+    orb.setFrameOrigin(result.origin)
+    snapped = result.dock
+    stripOpen = false
+    orb.orbView.setDock(stripEdge)
+    layout()
+  }
+
+  func snapshotHover(_ on: Bool) {
+    if on {
+      enterHover()
+    } else if hoverActive {
+      collapseHover()
+    }
   }
 }

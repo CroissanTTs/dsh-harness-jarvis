@@ -78,7 +78,7 @@
 - 隐藏时渲染停止（0fps），显示时恢复。
 - 调度中心：窗口 `collectionBehavior` 改为 `[.canJoinAllSpaces, .transient, .fullScreenAuxiliary]`，由系统负责隐藏。
 - 全屏检测：前台应用、Space 切换、以及定时轮询时检查。判定依据是 `CGWindowList` 中存在属于前台应用、layer 0、铺满当前屏幕的窗口。要排除 DSH 自己的截图遮罩等覆盖层。
-- 应用程序启动器检测需要 spike（见 §11）。
+- 应用程序启动器检测（spike 结论见 §11）：`CGWindowList` 中出现属于 Spotlight（`com.apple.Spotlight`）、或属于 Dock 且 layer > 0 的大面积可见窗口即视为启动器打开（调度中心同样命中，行为一致）。切换结果写入 `panel-debug.log`，便于调优。
 
 ## 4. 拖拽与吸附
 
@@ -246,7 +246,7 @@ UI 需要的数据以一个快照接口提供。本版 host 能拿到的真实�
 
 | 风险 | 处理 |
 |---|---|
-| 应用程序启动器（macOS 26）没有公开的检测接口 | 实现前先 spike：观察它打开时 `CGWindowList` 中 Dock 进程的全屏窗口特征；检测不可靠则该项在设置里标注"实验性" |
+| 应用程序启动器（macOS 26）没有公开的检测接口 | 已 spike：`/System/Applications/Apps.app` 打开时出现 Spotlight（聚焦）进程的窗口；旧日志中另有 Dock（程序坞）全屏窗口。两者都作为信号，锁屏时未能完成全屏形态的确认，解锁后需实测 |
 | 全屏误判（截图遮罩、无边框全屏窗口） | 排除表 + 仅判 layer 0 + 必须属于前台应用 |
 | 透明区域点击穿透 | OverlayPanel 只覆盖内容实际尺寸；形象窗口按鼠标是否在粒子圆内切换 `ignoresMouseEvents` |
 | 非激活面板里的文字输入 | 沿用现有 `canBecomeKey` 做法，spike 验证输入法（中文 IME）候选窗位置正确 |

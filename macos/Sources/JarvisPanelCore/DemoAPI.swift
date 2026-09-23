@@ -11,6 +11,7 @@ public actor DemoAPI: JarvisAPI {
   private var answeredCycle = -1
   private var extraMessages: [ChatMessage] = []
   private var read = false
+  private var pinned: Int?
 
   public init(start: Date = Date()) {
     self.start = start
@@ -20,7 +21,13 @@ public actor DemoAPI: JarvisAPI {
     case idle, awaiting, thinking, speaking, attention, failed
   }
 
+  /// Freezes the demo on one scene (0 idle … 5 failed, wrapping); nil resumes the clock.
+  public func setScene(_ index: Int?) {
+    pinned = index
+  }
+
   private func scene(at now: Date) -> (Scene, cycle: Int) {
+    if let pinned { return (Scene(rawValue: pinned % Scene.allCases.count)!, 0) }
     let elapsed = max(0, now.timeIntervalSince(start))
     let index = Int(elapsed / Self.scenePeriod)
     return (Scene(rawValue: index % Scene.allCases.count)!, index / Scene.allCases.count)
@@ -39,9 +46,16 @@ public actor DemoAPI: JarvisAPI {
                 choices: ["保留旧表", "直接替换"]),
   ]
 
-  public func snapshot() async throws -> Snapshot {
+  /// Answers and read state last for one pass through the scenes.
+  @discardableResult
+  private func syncCycle() -> Scene {
     let (scene, cycle) = scene(at: Date())
     if cycle != answeredCycle { answered = []; answeredCycle = cycle; read = false }
+    return scene
+  }
+
+  public func snapshot() async throws -> Snapshot {
+    let scene = syncCycle()
     let pending = scene == .attention ? demoPending.filter { !answered.contains($0.id) } : []
     let activity: Activity
     switch scene {
@@ -82,6 +96,7 @@ public actor DemoAPI: JarvisAPI {
   }
 
   public func answer(_ answer: PendingAnswer) async throws {
+    syncCycle()
     switch answer {
     case .decision(let id, _), .choice(let id, _), .text(let id, _):
       guard demoPending.contains(where: { $0.id == id }), !answered.contains(id) else {
@@ -100,6 +115,7 @@ public actor DemoAPI: JarvisAPI {
   }
 
   public func markRead(session: String?) async throws {
+    syncCycle()
     read = true
   }
 

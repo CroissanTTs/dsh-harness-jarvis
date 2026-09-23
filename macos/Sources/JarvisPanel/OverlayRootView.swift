@@ -6,14 +6,13 @@ struct OverlayRootView: View {
 
   @ObservedObject var state: OverlayState
   @ObservedObject var model: PanelModel
-  var onVoice: () -> Void
   var onHistory: () -> Void
   var onClose: () -> Void
 
   var body: some View {
     ZStack(alignment: .topLeading) {
       Color.clear
-      HoverLayerView(state: state, model: model, onVoice: onVoice, onHistory: onHistory)
+      HoverLayerView(state: state, model: model, onHistory: onHistory)
       if model.quickBarOpen, let q = state.quick {
         column(q)
           .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: q.side == .right ? .leading : .trailing)))

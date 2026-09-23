@@ -71,7 +71,7 @@ public actor DemoAPI: JarvisAPI {
       agentId: "demo-jarvis",
       activity: activity,
       error: nil,
-      voice: VoiceState(speaking: scene == .speaking, muted: muted),
+      voice: VoiceState(speaking: scene == .speaking, muted: muted, queued: scene == .speaking ? 2 : 0),
       counts: Counts(running: scene == .failed ? 1 : 2, pending: pending.count,
                      unread: read ? 0 : 1, failed: scene == .failed ? 1 : 0),
       sessions: list,
@@ -110,7 +110,7 @@ public actor DemoAPI: JarvisAPI {
     switch action {
     case .mute: muted = true
     case .unmute: muted = false
-    case .pause: break
+    case .pause, .resume, .skip, .clear: break
     }
   }
 

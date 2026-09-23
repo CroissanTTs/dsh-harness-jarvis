@@ -103,22 +103,32 @@ public struct PendingItem: Decodable, Sendable, Equatable, Identifiable {
   private enum CodingKeys: String, CodingKey { case id, kind, session, title, detail, note, choices }
 }
 
+/// `paused` / `queued` describe voice-mini's narration queue, which Jarvis only drives.
 public struct VoiceState: Decodable, Sendable, Equatable {
   public var speaking = false
   public var muted = false
+  public var paused = false
+  public var queued = 0
 
-  public init(speaking: Bool = false, muted: Bool = false) {
+  public init(speaking: Bool = false, muted: Bool = false, paused: Bool = false, queued: Int = 0) {
     self.speaking = speaking
     self.muted = muted
+    self.paused = paused
+    self.queued = queued
   }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     speaking = try c.decodeIfPresent(Bool.self, forKey: .speaking) ?? false
     muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+    paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+    queued = max(0, try c.decodeIfPresent(Int.self, forKey: .queued) ?? 0)
   }
 
-  private enum CodingKeys: String, CodingKey { case speaking, muted }
+  /// Something is playing, parked, or waiting to play.
+  public var active: Bool { speaking || paused || queued > 0 }
+
+  private enum CodingKeys: String, CodingKey { case speaking, muted, paused, queued }
 }
 
 /// GET /jarvis/state. Decoding is lenient so the panel keeps working against an

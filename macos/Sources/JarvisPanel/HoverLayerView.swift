@@ -25,7 +25,12 @@ enum Readout {
       ReadoutRow(label: "失败", value: "\(c.failed)", color: Theme.red),
     ]
     let counts = [c.running, c.pending, c.unread, c.failed]
-    let visible = zip(rows, counts).filter { $0.1 > 0 }.map(\.0)
+    var visible = zip(rows, counts).filter { $0.1 > 0 }.map(\.0)
+    let voice = snapshot.voice
+    if voice.paused || voice.queued > 0 {
+      let value = voice.queued > 0 ? "\(voice.queued)" : ""
+      visible.insert(ReadoutRow(label: voice.paused ? "已暂停" : "排队", value: value, color: Theme.cyan), at: 0)
+    }
     return visible.isEmpty ? [ReadoutRow(label: "一切就绪", value: "", color: Theme.dim)] : visible
   }
 
@@ -58,7 +63,6 @@ private struct EmergeModifier: ViewModifier {
 struct HoverLayerView: View {
   @ObservedObject var state: OverlayState
   @ObservedObject var model: PanelModel
-  var onVoice: () -> Void
   var onHistory: () -> Void
 
   @State private var hovered: Int?
@@ -67,10 +71,11 @@ struct HoverLayerView: View {
     ZStack(alignment: .topLeading) {
       Color.clear
       if let layout = state.hover {
+        let kinds = model.hoverButtons
         ForEach(Array(layout.buttons.enumerated()), id: \.offset) { i, center in
-          if state.showHover {
+          if state.showHover, i < kinds.count {
             let local = state.local(center)
-            button(i, center: local, side: layout.side)
+            button(i, kind: kinds[i], center: local, side: layout.side)
               .transition(emerge(at: local, index: i))
           }
         }
@@ -97,26 +102,25 @@ struct HoverLayerView: View {
       removal: .modifier(active: hidden, identity: shown).animation(.easeIn(duration: 0.16)))
   }
 
-  private func spec(_ i: Int) -> (icon: String, help: String, action: () -> Void) {
-    if i == 0 {
-      let kind = model.voiceButtonKind
-      let icon: String
-      switch kind {
-      case .pause: icon = "pause.fill"
-      case .mute: icon = "speaker.wave.2.fill"
-      case .unmute: icon = "speaker.slash.fill"
-      }
-      return (icon, kind.help, onVoice)
+  private static func icon(_ kind: HoverButton) -> String {
+    switch kind {
+    case .pause: return "pause.fill"
+    case .resume: return "play.fill"
+    case .skip: return "forward.end.fill"
+    case .clear: return "stop.fill"
+    case .mute: return "speaker.wave.2.fill"
+    case .unmute: return "speaker.slash.fill"
+    case .history: return "text.bubble.fill"
     }
-    return ("text.bubble.fill", "对话记录", onHistory)
   }
 
   @ViewBuilder
-  private func button(_ i: Int, center: CGPoint, side: HSide) -> some View {
-    let s = spec(i)
+  private func button(_ i: Int, kind: HoverButton, center: CGPoint, side: HSide) -> some View {
     let size = Placement.buttonSize
-    Button(action: s.action) {
-      Image(systemName: s.icon)
+    Button {
+      if kind == .history { onHistory() } else { Task { await model.press(kind) } }
+    } label: {
+      Image(systemName: Self.icon(kind))
         .font(.system(size: 12, weight: .semibold))
         .foregroundStyle(hovered == i ? Color.black.opacity(0.85) : Theme.cyan)
         .frame(width: size, height: size)
@@ -131,7 +135,7 @@ struct HoverLayerView: View {
     .position(center)
     .overlay(alignment: .topLeading) {
       if hovered == i {
-        Text(s.help)
+        Text(kind.help)
           .font(.system(size: 11, weight: .medium))
           .foregroundStyle(Theme.text)
           .fixedSize()

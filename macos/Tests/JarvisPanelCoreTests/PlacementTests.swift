@@ -56,6 +56,28 @@ final class PlacementTests: XCTestCase {
     XCTAssertEqual(angle, 165, accuracy: 0.001)
   }
 
+  func testThreeButtonsSpanExactlyPlusMinusThirtyDegrees() {
+    let l = Placement.hover(center: CGPoint(x: 720, y: 437), visible: visible, buttonCount: 3,
+                            listSize: listSize, capsuleSize: capsuleSize)
+    let angles = l.buttons.map { atan2($0.y - 437, $0.x - 720) * 180 / .pi }
+    XCTAssertEqual(angles[0], 150, accuracy: 0.001)
+    XCTAssertEqual(abs(angles[1]), 180, accuracy: 0.001)
+    XCTAssertEqual(angles[2], -150, accuracy: 0.001)
+    assertFitsAndSeparate(l)
+  }
+
+  func testThreeButtonsFitAtEveryEdgeAndCorner() {
+    let xs: [CGFloat] = [60, 720, 1380]
+    let ys: [CGFloat] = [60, 437, 815]
+    for x in xs {
+      for y in ys {
+        let l = Placement.hover(center: CGPoint(x: x, y: y), visible: visible, buttonCount: 3,
+                                listSize: listSize, capsuleSize: capsuleSize)
+        assertFitsAndSeparate(l)
+      }
+    }
+  }
+
   func testRightEdgeLowerHalfUsesCapsuleAbove() {
     let l = hover(1370, 300)
     XCTAssertEqual(l.side, .left)

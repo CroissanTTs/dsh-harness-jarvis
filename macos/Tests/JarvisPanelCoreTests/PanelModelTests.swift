@@ -98,18 +98,44 @@ final class PanelModelTests: XCTestCase {
     XCTAssertNil(model.answeringItem)
   }
 
-  func testVoiceButtonKinds() async {
-    await load(voice: VoiceState(speaking: true, muted: false))
-    XCTAssertEqual(model.voiceButtonKind, .pause)
-    await model.pressVoice()
-    await load(voice: VoiceState(speaking: false, muted: true))
-    XCTAssertEqual(model.voiceButtonKind, .unmute)
-    await model.pressVoice()
-    await load(voice: VoiceState(speaking: false, muted: false))
-    XCTAssertEqual(model.voiceButtonKind, .mute)
-    await model.pressVoice()
+  func testSpeakingShowsPlaybackControls() async {
+    await load(voice: VoiceState(speaking: true, queued: 2))
+    XCTAssertEqual(model.hoverButtons, [.pause, .skip, .clear])
+  }
+
+  func testPausedShowsResume() async {
+    await load(voice: VoiceState(paused: true, queued: 1))
+    XCTAssertEqual(model.hoverButtons, [.resume, .skip, .clear])
+  }
+
+  func testQuietShowsMuteToggleAndHistory() async {
+    await load(voice: VoiceState(muted: false))
+    XCTAssertEqual(model.hoverButtons, [.mute, .history])
+    await load(voice: VoiceState(muted: true))
+    XCTAssertEqual(model.hoverButtons, [.unmute, .history])
+  }
+
+  func testEachButtonSendsItsVoiceAction() async {
+    await load(voice: VoiceState(speaking: true))
+    for button: HoverButton in [.pause, .resume, .skip, .clear, .mute, .unmute] {
+      await model.press(button)
+    }
     let voices = await api.voices
-    XCTAssertEqual(voices, [.pause, .unmute, .mute])
+    XCTAssertEqual(voices, [.pause, .resume, .skip, .clear, .mute, .unmute])
+  }
+
+  func testHistoryButtonSendsNoVoiceAction() async {
+    await load()
+    await model.press(.history)
+    let voices = await api.voices
+    XCTAssertTrue(voices.isEmpty)
+  }
+
+  func testPressRefreshesSoButtonsFollowHost() async {
+    await load(voice: VoiceState(speaking: true, queued: 3))
+    await api.setSnapshot(Snapshot(agentId: "jv", voice: VoiceState()))
+    await model.press(.clear)
+    XCTAssertEqual(model.hoverButtons, [.mute, .history])
   }
 
   func testExpandingHistoryMarksReadAndPersists() async {
@@ -130,6 +156,26 @@ final class PanelModelTests: XCTestCase {
   }
 
   // MARK: - 边界值
+
+  func testLastQueuedItemStillCountsAsActive() async {
+    await load(voice: VoiceState(speaking: false, queued: 1))
+    XCTAssertEqual(model.hoverButtons, [.pause, .skip, .clear])
+  }
+
+  func testPausedWithEmptyQueueStillOffersResume() async {
+    await load(voice: VoiceState(paused: true, queued: 0))
+    XCTAssertEqual(model.hoverButtons.first, .resume)
+  }
+
+  func testSpeakingTheLastLineIsActive() async {
+    await load(voice: VoiceState(speaking: true, queued: 0))
+    XCTAssertEqual(model.hoverButtons.count, 3)
+  }
+
+  func testMutedButPlayingShowsPlaybackControls() async {
+    await load(voice: VoiceState(speaking: true, muted: true))
+    XCTAssertEqual(model.hoverButtons, [.pause, .skip, .clear])
+  }
 
   func testEmptyAndWhitespaceDraftsAreNotSent() async {
     await load()
@@ -234,6 +280,19 @@ final class PanelModelTests: XCTestCase {
   }
 
   // MARK: - 异常路径
+
+  func testVoiceFailureStillRefreshes() async {
+    await load(voice: VoiceState(speaking: true))
+    await api.setVoiceError(.http(500))
+    await api.setSnapshot(Snapshot(agentId: "jv", voice: VoiceState(paused: true)))
+    await model.press(.pause)
+    XCTAssertEqual(model.hoverButtons.first, .resume)
+  }
+
+  func testNoSnapshotYetShowsQuietButtons() {
+    XCTAssertNil(model.snapshot)
+    XCTAssertEqual(model.hoverButtons, [.mute, .history])
+  }
 
   func testNoRuntimeGoesOfflineAndRed() async {
     await api.setSnapshotError(.noRuntime)

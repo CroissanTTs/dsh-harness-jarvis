@@ -7,7 +7,7 @@ public enum PendingAnswer: Sendable, Equatable {
 }
 
 public enum VoiceAction: String, Sendable, Equatable {
-  case pause, mute, unmute
+  case pause, resume, skip, clear, mute, unmute
 }
 
 public enum JarvisAPIError: Error, Sendable, Equatable {

@@ -7,6 +7,7 @@ actor FakeAPI: JarvisAPI {
   var messagesResult: Result<[ChatMessage], JarvisAPIError> = .success([])
   var sendError: JarvisAPIError?
   var answerError: JarvisAPIError?
+  var voiceError: JarvisAPIError?
 
   private(set) var snapshotCalls = 0
   private(set) var sent: [(text: String, target: String?)] = []
@@ -19,6 +20,7 @@ actor FakeAPI: JarvisAPI {
   func setSnapshotError(_ e: JarvisAPIError) { snapshotResult = .failure(e) }
   func setSendError(_ e: JarvisAPIError?) { sendError = e }
   func setAnswerError(_ e: JarvisAPIError?) { answerError = e }
+  func setVoiceError(_ e: JarvisAPIError?) { voiceError = e }
 
   func snapshot() async throws -> Snapshot {
     snapshotCalls += 1
@@ -41,6 +43,7 @@ actor FakeAPI: JarvisAPI {
 
   func voice(_ action: VoiceAction) async throws {
     voices.append(action)
+    if let voiceError { throw voiceError }
   }
 
   func markRead(session: String?) async throws {

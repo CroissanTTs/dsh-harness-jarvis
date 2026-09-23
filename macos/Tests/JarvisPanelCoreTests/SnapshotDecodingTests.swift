@@ -51,6 +51,18 @@ final class SnapshotDecodingTests: XCTestCase {
     XCTAssertEqual(s.pending.first?.choices, [])
   }
 
+  func testVoiceQueueFields() throws {
+    let s = try decode(#"{"voice":{"speaking":false,"muted":false,"paused":true,"queued":3}}"#)
+    XCTAssertEqual(s.voice, VoiceState(paused: true, queued: 3))
+    XCTAssertTrue(s.voice.active)
+  }
+
+  func testNegativeQueueClampsToZero() throws {
+    let s = try decode(#"{"voice":{"queued":-2}}"#)
+    XCTAssertEqual(s.voice.queued, 0)
+    XCTAssertFalse(s.voice.active)
+  }
+
   func testEmptyObjectDecodes() throws {
     let s = try decode("{}")
     XCTAssertEqual(s.agentId, "")

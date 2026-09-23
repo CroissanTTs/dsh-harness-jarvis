@@ -44,7 +44,6 @@ final class AppController: NSObject {
     super.init()
     overlay = OverlayPanel(root: OverlayRootView(
       state: overlayState, model: model,
-      onVoice: { [weak self] in self?.pressVoice() },
       onHistory: { [weak self] in self?.openHistory() },
       onClose: { [weak self] in self?.model.closeQuickBar() }))
     if demo != nil { Log.write("demo mode") }
@@ -176,7 +175,7 @@ final class AppController: NSObject {
     let visible = screen.visibleFrame
     let center = orb.center
     let rows = Readout.rows(snapshot: model.snapshot, connection: model.connection)
-    let hover = Placement.hover(center: center, visible: visible, buttonCount: 2,
+    let hover = Placement.hover(center: center, visible: visible, buttonCount: model.hoverButtons.count,
                                 listSize: Readout.listSize(rows), capsuleSize: Readout.capsuleSize(rows))
     let quick = Placement.quickBar(center: center, visible: visible,
                                    barSize: CGSize(width: QuickBarView.width, height: QuickBarView.baseHeight))
@@ -472,10 +471,6 @@ final class AppController: NSObject {
       setTracking(false)
     }
     updateOverlayPresence()
-  }
-
-  private func pressVoice() {
-    Task { await model.pressVoice() }
   }
 
   private func openHistory() {

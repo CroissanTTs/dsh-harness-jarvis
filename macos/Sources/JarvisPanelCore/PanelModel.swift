@@ -25,14 +25,31 @@ public enum Connection: Equatable, Sendable {
   case offline(String)
 }
 
-public enum VoiceButtonKind: Equatable, Sendable {
-  case pause, mute, unmute
+/// Buttons on the hover arc: playback controls while voice is active, otherwise mute + history.
+public enum HoverButton: Equatable, Sendable {
+  case pause, resume, skip, clear, mute, unmute, history
 
   public var help: String {
     switch self {
-    case .pause: return "暂停口播"
+    case .pause: return "暂停"
+    case .resume: return "继续"
+    case .skip: return "跳过这条"
+    case .clear: return "清空队列"
     case .mute: return "静音"
     case .unmute: return "取消静音"
+    case .history: return "对话记录"
+    }
+  }
+
+  public var voiceAction: VoiceAction? {
+    switch self {
+    case .pause: return .pause
+    case .resume: return .resume
+    case .skip: return .skip
+    case .clear: return .clear
+    case .mute: return .mute
+    case .unmute: return .unmute
+    case .history: return nil
     }
   }
 }
@@ -87,10 +104,10 @@ public final class PanelModel: ObservableObject {
     return snapshot?.pending.first { $0.id == answeringID }
   }
 
-  public var voiceButtonKind: VoiceButtonKind {
+  public var hoverButtons: [HoverButton] {
     let voice = snapshot?.voice ?? VoiceState()
-    if voice.speaking { return .pause }
-    return voice.muted ? .unmute : .mute
+    if voice.active { return [voice.paused ? .resume : .pause, .skip, .clear] }
+    return [voice.muted ? .unmute : .mute, .history]
   }
 
   public func label(for target: Target) -> String {
@@ -232,13 +249,8 @@ public final class PanelModel: ObservableObject {
     try? await api.markRead(session: session)
   }
 
-  public func pressVoice() async {
-    let action: VoiceAction
-    switch voiceButtonKind {
-    case .pause: action = .pause
-    case .mute: action = .mute
-    case .unmute: action = .unmute
-    }
+  public func press(_ button: HoverButton) async {
+    guard let action = button.voiceAction else { return }
     try? await api.voice(action)
     await refresh()
   }

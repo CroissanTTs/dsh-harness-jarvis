@@ -372,7 +372,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               speaking,
               activity: live.activity(speaking, agentRunning(ctx, entry.jarvisSessionId)),
               error: live.error(),
-              voice: { speaking, muted: voiceMuted, queued: narration.queued },
+              voice: { speaking, muted: voiceMuted, paused: narration.paused, queued: narration.queued },
               counts: {
                 running: sessions.filter((s) => s.status === 'running').length,
                 pending: pending.length,
@@ -394,11 +394,15 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           }
           if (url === '/voice' && req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}');
-            if (body.action === 'mute') { voiceMuted = true; stopSpeech(); }
-            else if (body.action === 'unmute') voiceMuted = false;
-            else if (body.action === 'pause') stopSpeech();
-            else { sendJson(res, 400, { error: 'unknown action' }); return; }
-            debug(entry, '/jarvis/voice: ' + String(body.action));
+            const action = String(body.action);
+            if (action === 'mute') { voiceMuted = true; stopSpeech(); }
+            else if (action === 'unmute') voiceMuted = false;
+            else if (action in VOICE_MINI_CONTROL) {
+              if (action !== 'resume') stopSpeech();
+              const ok = await voiceMiniControl(webOrigin, action);
+              debug(entry, '/jarvis/voice: ' + action + ' → voice-mini ' + (ok ? 'ok' : 'failed'));
+            } else { sendJson(res, 400, { error: 'unknown action' }); return; }
+            debug(entry, '/jarvis/voice: ' + action);
             res.statusCode = 204; res.end(); return;
           }
           if (url === '/read' && req.method === 'POST') {
@@ -831,21 +835,50 @@ function readVoiceMiniRuntime(): { token?: string; rendererHeader?: { name: stri
 /** voice-mini narrates Jarvis (and every other session), so its playback is
  *  what the user hears as "Jarvis speaking". Cached briefly: /jarvis/state is
  *  polled every second and this is a same-host round trip. */
-const voiceMiniCache = { at: 0, value: { speaking: false, queued: 0 } };
-async function voiceMiniSpeech(origin: string | null): Promise<{ speaking: boolean; queued: number }> {
+type Narration = { speaking: boolean; paused: boolean; queued: number };
+const SILENT: Narration = { speaking: false, paused: false, queued: 0 };
+const voiceMiniCache = { at: 0, value: SILENT };
+async function voiceMiniSpeech(origin: string | null): Promise<Narration> {
   if (!origin || Date.now() - voiceMiniCache.at < 400) return voiceMiniCache.value;
   voiceMiniCache.at = Date.now();
   const vm = readVoiceMiniRuntime();
-  if (!vm?.token) { voiceMiniCache.value = { speaking: false, queued: 0 }; return voiceMiniCache.value; }
+  if (!vm?.token) { voiceMiniCache.value = SILENT; return SILENT; }
   try {
     const r = await fetch(origin + '/voice-mini/pet/state', {
       headers: { Authorization: `Bearer ${vm.token}` },
       signal: AbortSignal.timeout(300),
     });
-    const body = r.ok ? await r.json() as { speaking?: unknown; queued?: unknown } : {};
-    voiceMiniCache.value = { speaking: body.speaking === true, queued: typeof body.queued === 'number' ? body.queued : 0 };
+    const body = r.ok ? await r.json() as { speaking?: unknown; paused?: unknown; queued?: unknown } : {};
+    voiceMiniCache.value = {
+      speaking: body.speaking === true,
+      paused: body.paused === true,
+      queued: typeof body.queued === 'number' ? body.queued : 0,
+    };
   } catch { /* keep the last value; voice-mini may be busy or absent */ }
   return voiceMiniCache.value;
+}
+
+/** Playback control is voice-mini's; Jarvis only forwards the signal. */
+const VOICE_MINI_CONTROL: Record<string, string> = {
+  pause: '/voice-mini/pause',
+  resume: '/voice-mini/resume',
+  skip: '/voice-mini/skip',
+  clear: '/voice-mini/queue/clear',
+};
+async function voiceMiniControl(origin: string | null, action: string): Promise<boolean> {
+  const path = VOICE_MINI_CONTROL[action];
+  if (!origin || !path) return false;
+  const vm = readVoiceMiniRuntime();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (vm?.token) headers['Authorization'] = `Bearer ${vm.token}`;
+  if (vm?.rendererHeader && typeof vm.rendererHeader.name === 'string') {
+    headers[vm.rendererHeader.name] = String(vm.rendererHeader.value);
+  }
+  voiceMiniCache.at = 0;
+  try {
+    const r = await fetch(origin + path, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(1500) });
+    return r.ok;
+  } catch { return false; }
 }
 
 /** `running` per the agents service, or undefined when it can't tell. */

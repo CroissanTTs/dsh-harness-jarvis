@@ -50,7 +50,7 @@ public struct OrbAppearance: Sendable, Equatable {
 /// and the badge follows the same priority as the colour. With no status to
 /// show, another session's narration turns the orb violet instead of cyan.
 public enum OrbStateResolver {
-  public static func resolve(snapshot: Snapshot?, connected: Bool, inputOpen: Bool) -> OrbAppearance {
+  public static func resolve(snapshot: Snapshot?, connected: Bool, standby: Bool) -> OrbAppearance {
     let counts = snapshot?.counts ?? Counts()
     let hostError = !connected || snapshot == nil || snapshot?.error != nil
 
@@ -69,7 +69,7 @@ public enum OrbStateResolver {
     else if activity == .thinking { motion = .thinking }
     else if tint == .red { motion = .error }
     else if tint == .amber { motion = .attention }
-    else if activity == .awaiting || inputOpen { motion = .awaiting }
+    else if activity == .awaiting || standby { motion = .awaiting }
     else { motion = .idle }
 
     let badge: Badge?

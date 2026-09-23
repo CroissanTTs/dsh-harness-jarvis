@@ -10,8 +10,8 @@ final class OrbStateResolverTests: XCTestCase {
     snap(.idle, counts)
   }
 
-  private func resolve(_ s: Snapshot?, connected: Bool = true, inputOpen: Bool = false) -> OrbAppearance {
-    OrbStateResolver.resolve(snapshot: s, connected: connected, inputOpen: inputOpen)
+  private func resolve(_ s: Snapshot?, connected: Bool = true, standby: Bool = false) -> OrbAppearance {
+    OrbStateResolver.resolve(snapshot: s, connected: connected, standby: standby)
   }
 
   func testOfflineIsRedErrorWithoutBadge() {
@@ -58,7 +58,7 @@ final class OrbStateResolverTests: XCTestCase {
   }
 
   func testInputOpenMeansAwaiting() {
-    XCTAssertEqual(resolve(snap(), inputOpen: true).motion, .awaiting)
+    XCTAssertEqual(resolve(snap(), standby: true).motion, .awaiting)
   }
 
   func testHostAwaiting() {
@@ -76,6 +76,6 @@ final class OrbStateResolverTests: XCTestCase {
   }
 
   func testAttentionBeatsAwaiting() {
-    XCTAssertEqual(resolve(snap(.awaiting, Counts(pending: 1)), inputOpen: true).motion, .attention)
+    XCTAssertEqual(resolve(snap(.awaiting, Counts(pending: 1)), standby: true).motion, .attention)
   }
 }

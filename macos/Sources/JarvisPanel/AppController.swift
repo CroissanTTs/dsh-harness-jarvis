@@ -332,6 +332,7 @@ final class AppController: NSObject {
     collapseWork = nil
     guard !hoverActive else { return }
     hoverActive = true
+    model.setHovering(true)
     setTracking(true)
     openStrip()
     layout()
@@ -350,6 +351,7 @@ final class AppController: NSObject {
   private func collapseHover() {
     collapseWork = nil
     hoverActive = false
+    model.setHovering(false)
     withAnimation(.easeOut(duration: 0.15)) { overlayState.showHover = false }
     orb.badgeState.visible = true
     if !model.quickBarOpen {
@@ -419,6 +421,7 @@ final class AppController: NSObject {
       guard let self else { return }
       savePosition()
       hoverActive = false
+      model.setHovering(false)
       layout()
       trackMouse()
       if !hoverActive { closeStrip() }

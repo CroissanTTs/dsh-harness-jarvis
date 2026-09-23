@@ -28,7 +28,7 @@ final class SpeechSourceTests: XCTestCase {
   }
 
   private func resolve(_ s: Snapshot, connected: Bool = true) -> OrbAppearance {
-    OrbStateResolver.resolve(snapshot: s, connected: connected, inputOpen: false)
+    OrbStateResolver.resolve(snapshot: s, connected: connected, standby: false)
   }
 
   // MARK: - 等价类

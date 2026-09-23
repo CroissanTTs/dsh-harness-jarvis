@@ -42,6 +42,7 @@ import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
 import { LiveState } from './live-state.ts';
+import { visibleWorkers, workspaceName } from './sessions.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -79,8 +80,14 @@ function listWorkerIds(ctx: Context, entry: JarvisConfig): string[] {
     else if (typeof agents.list === 'function') ids = agents.list().map(pick);
     else if (typeof agents[Symbol.iterator] === 'function') ids = [...agents].map(pick);
   }
-  const selfAgentId = String(jarvisHandle?.agent?.id ?? '');
-  return ids.map(String).filter((id) => id && id !== entry.jarvisSessionId && (selfAgentId === '' || id !== selfAgentId));
+  let archived: unknown[] = [];
+  try { archived = [...((ctx as any).get?.('workspaceRegistry')?.archivedSessionIds ?? [])]; } catch { /* registry not started yet */ }
+  return visibleWorkers(ids, [entry.jarvisSessionId, String(jarvisHandle?.agent?.id ?? ''), ...archived]);
+}
+
+/** Folder of a live session's cwd, so two sessions titled alike can be told apart. */
+function sessionWorkspace(ctx: Context, id: string): string | undefined {
+  try { return workspaceName((ctx as any).get?.('sessions')?.get?.(id)?.header?.cwd); } catch { return undefined; }
 }
 
 /** Batch-reads titles via sessionQuery.readTitleSnapshots.
@@ -363,9 +370,13 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               titleCache.map = (await readTitleMap(ctx, ids)).map;
               titleCache.at = Date.now();
             }
-            const sessions = ids.map((id) => ({
-              id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
-            }));
+            const sessions = ids.map((id) => {
+              const workspace = sessionWorkspace(ctx, id);
+              return {
+                id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
+                ...(workspace ? { workspace } : {}),
+              };
+            });
             const pending = live.pending();
             sendJson(res, 200, {
               agentId: entry.jarvisSessionId,

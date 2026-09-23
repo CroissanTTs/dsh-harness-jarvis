@@ -70,6 +70,8 @@ public final class PanelModel: ObservableObject {
   @Published public var target: Target = .jarvis
   @Published public private(set) var quickBarOpen = false
   @Published public private(set) var historyExpanded = false
+  /// The pointer is over the orb: it shows standby, as when the quick bar is open.
+  @Published public private(set) var hovering = false
 
   private let api: JarvisAPI
   private let store: SettingsStore
@@ -83,12 +85,24 @@ public final class PanelModel: ObservableObject {
   // MARK: Derived
 
   public var appearance: OrbAppearance {
-    OrbStateResolver.resolve(snapshot: snapshot, connected: connection == .online, inputOpen: quickBarOpen)
+    OrbStateResolver.resolve(snapshot: snapshot, connected: connection == .online, standby: quickBarOpen || hovering)
   }
 
+  public static let jarvisLabel = "贾维斯"
+
   public var targets: [TargetOption] {
-    [TargetOption(target: .jarvis, label: "贾维斯", status: nil)]
-      + (snapshot?.sessions ?? []).map { TargetOption(target: .session($0.id), label: $0.shortName, status: $0.status) }
+    [TargetOption(target: .jarvis, label: Self.jarvisLabel, status: nil)]
+      + (snapshot?.sessions ?? []).map { TargetOption(target: .session($0.id), label: displayName($0), status: $0.status) }
+  }
+
+  /// A session named like Jarvis itself, or like another session, gets its
+  /// workspace folder appended; the id tail breaks any tie that remains.
+  private func displayName(_ session: SessionInfo) -> String {
+    let name = session.shortName
+    let others = (snapshot?.sessions ?? []).filter { $0.id != session.id && $0.shortName == name }
+    guard name == Self.jarvisLabel || !others.isEmpty else { return name }
+    if let ws = session.workspace, !others.contains(where: { $0.workspace == ws }) { return "\(name) · \(ws)" }
+    return "\(name) · \(session.id.suffix(6))"
   }
 
   public var visiblePending: [PendingItem] {
@@ -112,9 +126,9 @@ public final class PanelModel: ObservableObject {
 
   public func label(for target: Target) -> String {
     switch target {
-    case .jarvis: return "贾维斯"
+    case .jarvis: return Self.jarvisLabel
     case .session(let id):
-      return snapshot?.sessions.first { $0.id == id }?.shortName ?? String(id.suffix(8))
+      return snapshot?.sessions.first { $0.id == id }.map(displayName) ?? String(id.suffix(8))
     }
   }
 
@@ -150,6 +164,10 @@ public final class PanelModel: ObservableObject {
 
   private func loadMessages() async {
     if let list = try? await api.messages() { messages = list }
+  }
+
+  public func setHovering(_ on: Bool) {
+    if hovering != on { hovering = on }
   }
 
   // MARK: Quick bar

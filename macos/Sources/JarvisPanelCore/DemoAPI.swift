@@ -34,10 +34,13 @@ public actor DemoAPI: JarvisAPI {
   }
 
   private let sessions = [
-    SessionInfo(id: "demo-hammer", title: "贾维斯-hammer", status: .running, unread: false),
-    SessionInfo(id: "demo-anvil", title: "贾维斯-anvil", status: .waiting, unread: false),
-    SessionInfo(id: "demo-docs", title: "贾维斯-docs", status: .done, unread: true),
+    SessionInfo(id: "demo-hammer", title: "贾维斯-hammer", status: .running, unread: false, workspace: "hammer"),
+    SessionInfo(id: "demo-anvil", title: "贾维斯-anvil", status: .waiting, unread: false, workspace: "anvil"),
+    SessionInfo(id: "demo-docs", title: "贾维斯-docs", status: .done, unread: true, workspace: "docs"),
+    SessionInfo(id: "demo-quant", title: "量化回测", status: .idle, unread: false, workspace: "Quant", managed: false),
+    SessionInfo(id: "demo-dev", title: "贾维斯", status: .idle, unread: false, workspace: "dsh-plugin-discovery", managed: false),
   ]
+  private var managedOverride: [String: Bool] = [:]
 
   private let demoPending = [
     PendingItem(id: "demo-p1", kind: .approval, session: "demo-hammer", title: "请求执行",
@@ -64,7 +67,11 @@ public actor DemoAPI: JarvisAPI {
     case .speaking, .narrating: activity = .speaking
     default: activity = .idle
     }
-    var list = sessions
+    var list = sessions.map { s -> SessionInfo in
+      var s = s
+      if let on = managedOverride[s.id] { s.managed = on }
+      return s
+    }
     if read { list = list.map { var s = $0; s.unread = false; return s } }
     if scene == .failed { list[0].status = .failed }
     let voice: VoiceState
@@ -90,8 +97,19 @@ public actor DemoAPI: JarvisAPI {
     return after + 1
   }
 
-  public func messages() async throws -> [ChatMessage] {
-    [
+  public func setManaged(session: String, managed: Bool) async throws {
+    guard sessions.contains(where: { $0.id == session }) else { throw JarvisAPIError.http(404) }
+    managedOverride[session] = managed
+  }
+
+  public func messages(session: String?) async throws -> [ChatMessage] {
+    if let session {
+      return [
+        ChatMessage(id: "\(session)-u", role: "user", text: "修完测试后跑一遍 lint"),
+        ChatMessage(id: "\(session)-a", role: "assistant", text: "lint 通过，改了 2 个文件的导入顺序。"),
+      ]
+    }
+    return [
       ChatMessage(id: "d1", role: "assistant", text: "hammer 的测试还剩 28 个在跑。"),
       ChatMessage(id: "d2", role: "user", text: "让 hammer 修完测试后跑一遍 lint"),
       ChatMessage(id: "d3", role: "assistant", text: "好的，已转告。", routedTo: "demo-hammer"),

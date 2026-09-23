@@ -27,7 +27,8 @@ struct HistoryView: View {
     let recent = Array(model.messages.suffix(Self.limit))
     return VStack(spacing: 6) {
       if recent.isEmpty {
-        Text("还没有对话").font(.system(size: 11)).foregroundStyle(Theme.faint).padding(.vertical, 8)
+        Text(model.target == .jarvis ? "还没有对话" : "\(model.label(for: model.target)) 还没有对话")
+          .font(.system(size: 11)).foregroundStyle(Theme.faint).padding(.vertical, 8)
       }
       ForEach(growsUp ? recent : recent.reversed()) { bubble($0) }
     }

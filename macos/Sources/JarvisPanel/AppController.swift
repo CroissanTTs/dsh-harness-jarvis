@@ -589,6 +589,10 @@ extension AppController {
     layout()
   }
 
+  func snapshotTargets(_ on: Bool) {
+    overlayState.showTargets = on
+  }
+
   func snapshotHover(_ on: Bool) {
     if on {
       enterHover()

@@ -120,40 +120,127 @@ struct QuickBarView: View {
   }
 }
 
-/// Target list opened from the chip (spec §6.1).
+/// Target list opened from the chip (spec §6.1): Jarvis plus the sessions
+/// handed to it, and below them the other sessions that can be handed over.
 struct TargetListView: View {
+  static let candidatesMaxHeight: CGFloat = 160
+
   @ObservedObject var model: PanelModel
   var onPick: () -> Void
 
+  @State private var adding = false
+  @State private var hovered: String?
+
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {
-      ForEach(Array(model.targets.enumerated()), id: \.element.id) { i, option in
-        Button {
-          model.selectTarget(number: i + 1)
-          onPick()
-        } label: {
-          HStack(spacing: 8) {
-            Circle().fill(option.status == nil ? Theme.cyan : Theme.status(option.status)).frame(width: 6, height: 6)
-            Text(option.label).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
-            if option.target == .jarvis {
-              Text("直接对话").font(.system(size: 10)).foregroundStyle(Theme.faint)
-            }
-            Spacer(minLength: 8)
-            if i < 9 {
-              Text("⌘\(i + 1)").font(.system(size: 10, design: .rounded)).foregroundStyle(Theme.faint)
+      ForEach(Array(model.targets.enumerated()), id: \.element.id) { i, option in targetRow(i, option) }
+      if !model.candidates.isEmpty {
+        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1).padding(.vertical, 3).padding(.horizontal, 6)
+        addToggle
+        if adding {
+          ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 1) {
+              ForEach(model.candidates) { candidateRow($0) }
             }
           }
-          .padding(.horizontal, 10)
-          .frame(height: 26)
-          .background(RoundedRectangle(cornerRadius: 6).fill(option.target == model.target ? Theme.cyan.opacity(0.14) : .clear))
-          .contentShape(Rectangle())
+          .frame(maxHeight: Self.candidatesMaxHeight)
+          .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
       }
     }
     .padding(4)
-    .frame(width: 200)
+    .frame(width: 220)
     .hud(radius: 10)
     .hitArea()
+    .animation(.easeOut(duration: 0.15), value: adding)
+  }
+
+  private func targetRow(_ i: Int, _ option: TargetOption) -> some View {
+    HStack(spacing: 0) {
+      Button {
+        model.selectTarget(number: i + 1)
+        onPick()
+      } label: {
+        HStack(spacing: 8) {
+          Circle().fill(option.status == nil ? Theme.cyan : Theme.status(option.status)).frame(width: 6, height: 6)
+          Text(option.label).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
+          if option.target == .jarvis {
+            Text("直接对话").font(.system(size: 10)).foregroundStyle(Theme.faint)
+          }
+          Spacer(minLength: 8)
+          if i < 9, hovered != option.id || option.target == .jarvis {
+            Text("⌘\(i + 1)").font(.system(size: 10, design: .rounded)).foregroundStyle(Theme.faint)
+          }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, option.target == .jarvis ? 10 : 4)
+        .frame(height: 26)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      if let id = option.target.sessionID, hovered == option.id {
+        Button {
+          Task { await model.setManaged(id, false) }
+        } label: {
+          Image(systemName: "minus.circle")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.dim)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("不再交给贾维斯")
+        .disabled(model.managingID != nil)
+      }
+    }
+    .background(RoundedRectangle(cornerRadius: 6).fill(option.target == model.target ? Theme.cyan.opacity(0.14) : .clear))
+    .onHover { on in
+      if on { hovered = option.id } else if hovered == option.id { hovered = nil }
+    }
+  }
+
+  private var addToggle: some View {
+    Button {
+      adding.toggle()
+    } label: {
+      HStack(spacing: 8) {
+        Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.cyan)
+        Text("交给贾维斯…").font(.system(size: 12)).foregroundStyle(Theme.dim)
+        Spacer(minLength: 8)
+        Text("\(model.candidates.count)").font(.system(size: 10, design: .rounded)).foregroundStyle(Theme.faint)
+        Image(systemName: adding ? "chevron.up" : "chevron.down")
+          .font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.faint)
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 26)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func candidateRow(_ option: TargetOption) -> some View {
+    Button {
+      guard let id = option.target.sessionID else { return }
+      Task { await model.setManaged(id, true) }
+    } label: {
+      HStack(spacing: 8) {
+        Circle().fill(Theme.status(option.status)).frame(width: 6, height: 6)
+        Text(option.label).font(.system(size: 12)).foregroundStyle(Theme.dim).lineLimit(1)
+        Spacer(minLength: 8)
+        Image(systemName: model.managingID == option.target.sessionID ? "ellipsis" : "plus.circle")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(Theme.cyan.opacity(hovered == option.id ? 1 : 0.6))
+      }
+      .padding(.horizontal, 10)
+      .frame(height: 26)
+      .background(RoundedRectangle(cornerRadius: 6).fill(hovered == option.id ? Color.white.opacity(0.05) : .clear))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(model.managingID != nil)
+    .help("交给贾维斯管理")
+    .onHover { on in
+      if on { hovered = option.id } else if hovered == option.id { hovered = nil }
+    }
   }
 }

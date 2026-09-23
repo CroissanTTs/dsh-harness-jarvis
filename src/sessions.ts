@@ -15,6 +15,29 @@ export function visibleWorkers(ids: Iterable<unknown>, exclude: Iterable<unknown
   return out;
 }
 
+export type Delivery = 'followup' | 'steer' | 'inject';
+
+/** Hands a message to a session so it actually acts on it: an idle agent gets
+ *  a new turn (`followup`), a running one takes it at its next step (`steer`).
+ *  Plain `inject` only queues without waking, so it is the last resort.
+ *  @returns how it was delivered, or null when the agent takes no messages. */
+export function deliver(agent: unknown, message: unknown): Delivery | null {
+  const a = agent as { status?: unknown; followup?: unknown; steer?: unknown; inject?: unknown } | null;
+  if (!a) return null;
+  const call = (kind: Delivery): Delivery | null => {
+    const fn = a[kind];
+    if (typeof fn !== 'function') return null;
+    fn.call(a, message);
+    return kind;
+  };
+  const preferred: Delivery[] = a.status === 'running' ? ['steer', 'followup'] : ['followup', 'steer'];
+  for (const kind of [...preferred, 'inject' as const]) {
+    const done = call(kind);
+    if (done) return done;
+  }
+  return null;
+}
+
 /** Folder name of a session's working directory, used to tell same-titled sessions apart. */
 export function workspaceName(cwd: unknown): string | undefined {
   if (typeof cwd !== 'string') return undefined;

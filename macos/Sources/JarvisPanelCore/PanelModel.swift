@@ -11,6 +11,11 @@ public enum Target: Equatable, Sendable {
     case .session(let id): return id
     }
   }
+
+  public var sessionID: String? {
+    if case .session(let id) = self { return id }
+    return nil
+  }
 }
 
 public struct TargetOption: Identifiable, Equatable, Sendable {
@@ -67,7 +72,14 @@ public final class PanelModel: ObservableObject {
   @Published public private(set) var toast: String?
   @Published public private(set) var answeringID: String?
   @Published public var draft = ""
-  @Published public var target: Target = .jarvis
+  /// The history shows the target's own conversation, so switching reloads it.
+  @Published public var target: Target = .jarvis {
+    didSet {
+      guard target != oldValue, quickBarOpen, historyExpanded else { return }
+      messages = []
+      Task { await loadMessages() }
+    }
+  }
   @Published public private(set) var quickBarOpen = false
   @Published public private(set) var historyExpanded = false
   /// The pointer is over the orb: it shows standby, as when the quick bar is open.
@@ -90,9 +102,19 @@ public final class PanelModel: ObservableObject {
 
   public static let jarvisLabel = "贾维斯"
 
+  /// Jarvis plus the sessions handed to it.
   public var targets: [TargetOption] {
     [TargetOption(target: .jarvis, label: Self.jarvisLabel, status: nil)]
-      + (snapshot?.sessions ?? []).map { TargetOption(target: .session($0.id), label: displayName($0), status: $0.status) }
+      + (snapshot?.sessions ?? []).filter(\.managed).map(option)
+  }
+
+  /// Sessions that could be handed to Jarvis.
+  public var candidates: [TargetOption] {
+    (snapshot?.sessions ?? []).filter { !$0.managed }.map(option)
+  }
+
+  private func option(_ s: SessionInfo) -> TargetOption {
+    TargetOption(target: .session(s.id), label: displayName(s), status: s.status)
   }
 
   /// A session named like Jarvis itself, or like another session, gets its
@@ -128,6 +150,7 @@ public final class PanelModel: ObservableObject {
     switch target {
     case .jarvis: return Self.jarvisLabel
     case .session(let id):
+      if let agent = snapshot?.agentId, !agent.isEmpty, id == agent { return Self.jarvisLabel }
       return snapshot?.sessions.first { $0.id == id }.map(displayName) ?? String(id.suffix(8))
     }
   }
@@ -163,7 +186,10 @@ public final class PanelModel: ObservableObject {
   }
 
   private func loadMessages() async {
-    if let list = try? await api.messages() { messages = list }
+    let wanted = target
+    guard let list = try? await api.messages(session: wanted.sessionID) else { return }
+    // A slower load for the previous target must not overwrite the current one.
+    if target == wanted { messages = list }
   }
 
   public func setHovering(_ on: Bool) {
@@ -173,7 +199,7 @@ public final class PanelModel: ObservableObject {
   // MARK: Quick bar
 
   public func openQuickBar() {
-    if let first = snapshot?.pending.first {
+    if let first = snapshot?.pending.first, isManaged(first.session) {
       target = .session(first.session)
     } else {
       target = restoredTarget()
@@ -192,7 +218,32 @@ public final class PanelModel: ObservableObject {
 
   private func restoredTarget() -> Target {
     guard let key = store.settings.lastTarget, key != Target.jarvis.storageKey else { return .jarvis }
-    return (snapshot?.sessions.contains { $0.id == key } ?? false) ? .session(key) : .jarvis
+    return isManaged(key) ? .session(key) : .jarvis
+  }
+
+  private func isManaged(_ id: String) -> Bool {
+    snapshot?.sessions.contains { $0.id == id && $0.managed } ?? false
+  }
+
+  // MARK: Managed set
+
+  @Published public private(set) var managingID: String?
+
+  /// Hands `session` to Jarvis or takes it back. Taking back the current
+  /// target falls back to talking to Jarvis directly.
+  public func setManaged(_ session: String, _ on: Bool) async {
+    guard managingID == nil else { return }
+    managingID = session
+    defer { managingID = nil }
+    do {
+      try await api.setManaged(session: session, managed: on)
+      sendError = nil
+    } catch {
+      sendError = (on ? "托管失败：" : "移出失败：") + Self.describe(error)
+      return
+    }
+    if !on, target == .session(session) { target = .jarvis }
+    await refresh()
   }
 
   /// ⌘1…⌘9; 1-based, out-of-range numbers are ignored.

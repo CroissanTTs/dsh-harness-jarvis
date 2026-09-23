@@ -15,6 +15,7 @@ final class Snapshotter {
     var hover = false
     var quick = false
     var history = false
+    var targets = false
   }
 
   private let controller: AppController
@@ -48,10 +49,12 @@ final class Snapshotter {
       Scene(name: "12-bottomleft-quickbar", demo: 0, origin: CGPoint(x: v.minX + 40, y: v.minY + 40), quick: true),
       Scene(name: "13-corner-topright-speaking-hover", demo: 3, origin: CGPoint(x: v.maxX - 140, y: v.maxY - 140), hover: true),
       Scene(name: "14-narrating-other-session", demo: 6, origin: upper),
+      Scene(name: "15-targets-managed", demo: 0, origin: lower, quick: true, targets: true),
     ]
     let (orb, _, model) = controller.snapshotParts
     for scene in scenes {
       model.closeQuickBar()
+      controller.snapshotTargets(false)
       controller.snapshotHover(false)
       await demo.setScene(scene.demo)
       await model.refresh()
@@ -60,6 +63,10 @@ final class Snapshotter {
       if scene.quick {
         await model.setHistoryExpanded(scene.history)
         model.openQuickBar()
+        if scene.targets {
+          try? await Task.sleep(for: .milliseconds(200))
+          controller.snapshotTargets(true)
+        }
       }
       try? await Task.sleep(for: .milliseconds(800))
       orb.orbView.advance(seconds: 2.5)

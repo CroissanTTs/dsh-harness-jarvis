@@ -128,6 +128,9 @@ export class LiveState {
     });
   }
 
+  /** Something outside LiveState changed what /state returns (e.g. the managed set). */
+  touch(): void { this.bump(); }
+
   private bump(): void {
     this.seq += 1;
     for (const w of [...this.waiters]) w();

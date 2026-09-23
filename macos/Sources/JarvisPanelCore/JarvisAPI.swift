@@ -35,7 +35,10 @@ public protocol JarvisAPI: Sendable {
   /// Blocks until the host's state version differs from `after` (or `timeout`
   /// passes) and returns the current version.
   func waitForChange(after: Int, timeout: TimeInterval) async throws -> Int
-  func messages() async throws -> [ChatMessage]
+  /// Jarvis's own conversation when `session` is nil, otherwise that session's.
+  func messages(session: String?) async throws -> [ChatMessage]
+  /// Hands a session to Jarvis (`managed == true`) or takes it back.
+  func setManaged(session: String, managed: Bool) async throws
   func send(text: String, target: String?) async throws
   func answer(_ answer: PendingAnswer) async throws
   func voice(_ action: VoiceAction) async throws

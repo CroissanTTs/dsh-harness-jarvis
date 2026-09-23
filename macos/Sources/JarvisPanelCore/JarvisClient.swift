@@ -53,9 +53,17 @@ public final class JarvisClient: JarvisAPI, @unchecked Sendable {
     do { return try JSONDecoder().decode(Reply.self, from: data).version } catch { throw JarvisAPIError.decoding }
   }
 
-  public func messages() async throws -> [ChatMessage] {
-    let data = try await request("GET", "/jarvis/messages")
+  public func messages(session: String?) async throws -> [ChatMessage] {
+    var path = "/jarvis/messages"
+    if let session, let q = session.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+      path += "?session=\(q)"
+    }
+    let data = try await request("GET", path)
     do { return try ChatMessages.decode(data) } catch { throw JarvisAPIError.decoding }
+  }
+
+  public func setManaged(session: String, managed: Bool) async throws {
+    _ = try await request("POST", "/jarvis/managed", body: ["session": session, "managed": managed])
   }
 
   public func send(text: String, target: String?) async throws {

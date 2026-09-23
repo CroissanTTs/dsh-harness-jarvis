@@ -37,8 +37,32 @@ actor FakeAPI: JarvisAPI {
     return waitVersion
   }
 
-  func messages() async throws -> [ChatMessage] {
-    try messagesResult.get()
+  private(set) var messageRequests: [String?] = []
+  private(set) var managedCalls: [(session: String, managed: Bool)] = []
+  var managedError: JarvisAPIError?
+  /// Per-session conversations; falls back to `messagesResult`.
+  var sessionMessages: [String: [ChatMessage]] = [:]
+  /// Seconds each `messages` call takes, to exercise target switches mid-load.
+  var messagesDelay: TimeInterval = 0
+
+  func setManagedError(_ e: JarvisAPIError?) { managedError = e }
+  func setSessionMessages(_ id: String, _ list: [ChatMessage]) { sessionMessages[id] = list }
+  func setMessagesDelay(_ s: TimeInterval) { messagesDelay = s }
+
+  func messages(session: String?) async throws -> [ChatMessage] {
+    messageRequests.append(session)
+    if messagesDelay > 0 { try? await Task.sleep(for: .seconds(messagesDelay)) }
+    if let session, let list = sessionMessages[session] { return list }
+    return try messagesResult.get()
+  }
+
+  var managedDelay: TimeInterval = 0
+  func setManagedDelay(_ s: TimeInterval) { managedDelay = s }
+
+  func setManaged(session: String, managed: Bool) async throws {
+    managedCalls.append((session, managed))
+    if managedDelay > 0 { try? await Task.sleep(for: .seconds(managedDelay)) }
+    if let managedError { throw managedError }
   }
 
   func send(text: String, target: String?) async throws {

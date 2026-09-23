@@ -39,13 +39,17 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
   public var unread: Bool
   /// Folder name of the session's working directory; tells same-titled sessions apart.
   public var workspace: String?
+  /// Handed to Jarvis: only these are send targets. Older hosts list no others, so absent means true.
+  public var managed: Bool
 
-  public init(id: String, title: String, status: SessionStatus, unread: Bool, workspace: String? = nil) {
+  public init(id: String, title: String, status: SessionStatus, unread: Bool,
+              workspace: String? = nil, managed: Bool = true) {
     self.id = id
     self.title = title
     self.status = status
     self.unread = unread
     self.workspace = workspace
+    self.managed = managed
   }
 
   public init(from decoder: Decoder) throws {
@@ -56,6 +60,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     unread = try c.decodeIfPresent(Bool.self, forKey: .unread) ?? false
     let ws = ((try? c.decodeIfPresent(String.self, forKey: .workspace)) ?? nil)?.trimmingCharacters(in: .whitespaces)
     workspace = (ws?.isEmpty ?? true) ? nil : ws
+    managed = ((try? c.decodeIfPresent(Bool.self, forKey: .managed)) ?? nil) ?? true
   }
 
   /// Display name without the "贾维斯-" / "[贾维斯]" worker prefix (SPEC §9.2).
@@ -67,7 +72,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     return t.isEmpty ? String(id.suffix(8)) : t
   }
 
-  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace }
+  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace, managed }
 }
 
 public enum PendingKind: String, Sendable, Equatable {

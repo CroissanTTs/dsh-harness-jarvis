@@ -40,9 +40,11 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { LiveState } from './live-state.ts';
-import { visibleWorkers, workspaceName } from './sessions.ts';
+import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
+import { ManagedSet } from './managed.ts';
+import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -121,8 +123,6 @@ async function readTitleMap(ctx: Context, ids: string[]): Promise<{ map: Record<
 }
 
 /** /jarvis/input wraps session-targeted text in this instruction; history shows the original. */
-const ROUTED_INPUT = /^用户要求把以下内容发给会话 (\S+)。请优化说法后用 inject_to_session 发送：\n\n([\s\S]*)$/;
-
 export const name = 'dsh-harness-jarvis';
 
 /** Hard-required services. llm / systemPrompt / webServer / settings deferred. */
@@ -181,15 +181,33 @@ function debug(entry: JarvisConfig, msg: string): void {
 const COMMANDER_PERSONA = [
   '## 你是贾维斯(Jarvis)',
   '你是用户的管家/指挥官。你管着多个会话(worker):用户在悬浮窗选中一个会话、打字给你,你优化说法后用 inject_to_session 发给那个会话。',
+  '- 你只能向托管集里的会话发内容。用户说"把某某会话交给你/你来管"时,先 list_managed 找到它的 id,再 manage_session;说"不用管了"就 release_session。',
   '- 你不堆 worker 的内容进自己记忆;worker 各自干净。你只干路由/口播/inject 决策/续轮判断。',
-  '- 不能 inject_to_session 给自己(target ≠ 自己 且 ∈ 托管集)。',
+  '- 不能 inject_to_session 给自己。',
+  '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
   '- 一两句话,别读代码/路径/markdown 出来。',
 ].join('\n');
 
-function loadManagedSet(_file: string): Set<string> {
-  return new Set<string>();
+/** What Jarvis's tools need from the running plugin. */
+interface JarvisDeps {
+  managed: ManagedSet;
+  sessionRows: () => Promise<SessionRow[]>;
+  setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
+  say: (text: string) => Promise<SpeakResult>;
+  ask: (question: string, choices: string[], exec?: { agent?: unknown; signal?: AbortSignal }) => Promise<string>;
 }
+
+interface SessionRow {
+  id: string;
+  title: string;
+  status: string;
+  unread: boolean;
+  managed: boolean;
+  workspace?: string;
+}
+
+type SpeakResult = 'voice-mini' | 'built-in' | 'muted' | 'failed';
 
 interface LockState { holder?: string; leaseUntil?: number; }
 function loadLock(_file: string): LockState { return {}; }
@@ -314,9 +332,56 @@ function killPanel(entry: JarvisConfig): void {
 export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   const entry = { ...Config(rawConfig ?? {}), ...(rawConfig as object) } as JarvisConfig;
   debug(entry, 'apply() started');
-  const managed = loadManagedSet(entry.managedFile);
+  const managed = new ManagedSet(resolveDir(entry.managedFile),
+    (e) => debug(entry, 'managed.json write failed: ' + (e instanceof Error ? e.message : String(e))));
   const lock = loadLock(entry.lockFile);
   const live = new LiveState(entry.jarvisSessionId);
+
+  /** Every visible worker (not Jarvis, not archived), flagged by whether it is handed to Jarvis. */
+  const sessionRows = async (): Promise<SessionRow[]> => {
+    const ids = listWorkerIds(ctx, entry);
+    if (Date.now() - titleCache.at > 10_000 || ids.some((id) => !(id in titleCache.map))) {
+      titleCache.map = (await readTitleMap(ctx, ids)).map;
+      titleCache.at = Date.now();
+    }
+    return ids.map((id) => {
+      const workspace = sessionWorkspace(ctx, id);
+      return {
+        id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
+        managed: managed.has(id),
+        ...(workspace ? { workspace } : {}),
+      };
+    });
+  };
+
+  const setManaged = async (id: string, on: boolean): Promise<'ok' | 'not-found'> => {
+    if (on && !listWorkerIds(ctx, entry).includes(id)) return 'not-found';
+    if (on ? managed.add(id) : managed.remove(id)) live.touch();
+    return 'ok';
+  };
+
+  const deps: JarvisDeps = {
+    managed,
+    sessionRows,
+    setManaged,
+    say: (text) => speakAsJarvis(builtInTts, entry, text),
+    ask: async (question, choices, exec) => {
+      const uq = (ctx as any).get?.('userQuestions') as { ask?: (r: unknown) => Promise<any> } | undefined;
+      if (!uq?.ask) throw new Error('ask_user: userQuestions service unavailable');
+      const agent = exec?.agent ?? jarvisHandle?.agent;
+      const answer = await uq.ask({
+        questions: [{
+          id: 'q1', question, header: '贾维斯',
+          ...(choices.length > 0 ? { options: choices.map((label) => ({ label })) } : {}),
+        }],
+        ...(agent ? { agent } : {}),
+        ...(exec?.signal ? { signal: exec.signal } : {}),
+      });
+      const first = answer?.answers?.[0];
+      const picked = [...(first?.selected ?? []), ...(first?.custom ? [first.custom] : [])];
+      return picked.join('；');
+    },
+  };
 
   // ── provide 'jarvis' service so voice-mini (and other plugins) auto-detect
   //    us. voice-mini does ctx.inject(['jarvis']) → flips jarvisLinked (shows
@@ -365,22 +430,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             const narration = await voiceMiniQueue(webOrigin);
             const speech = live.speech() ?? (playingChild !== null ? { source: 'jarvis' as const } : null);
             const speaking = speech !== null;
-            const ids = listWorkerIds(ctx, entry);
-            if (Date.now() - titleCache.at > 10_000 || ids.some((id) => !(id in titleCache.map))) {
-              titleCache.map = (await readTitleMap(ctx, ids)).map;
-              titleCache.at = Date.now();
-            }
-            const sessions = ids.map((id) => {
-              const workspace = sessionWorkspace(ctx, id);
-              return {
-                id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
-                ...(workspace ? { workspace } : {}),
-              };
-            });
+            const sessions = await sessionRows();
+            const handed = sessions.filter((s) => s.managed);
             const pending = live.pending();
             sendJson(res, 200, {
               agentId: entry.jarvisSessionId,
-              managed: [...managed],
+              managed: managed.list(),
               speaking,
               activity: live.activity(speaking, agentRunning(ctx, entry.jarvisSessionId)),
               error: live.error(),
@@ -390,10 +445,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
                 muted: voiceMuted, paused: narration.paused, queued: narration.queued,
               },
               counts: {
-                running: sessions.filter((s) => s.status === 'running').length,
+                running: handed.filter((s) => s.status === 'running').length,
                 pending: pending.length,
-                unread: sessions.filter((s) => s.unread).length,
-                failed: sessions.filter((s) => s.status === 'failed').length,
+                unread: handed.filter((s) => s.unread).length,
+                failed: handed.filter((s) => s.status === 'failed').length,
               },
               sessions,
               pending,
@@ -455,7 +510,15 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             const ms = await (llm as any).listModels(p);
             sendJson(res, 200, { provider: p, models: ms.map((m: any) => ({ id: m.id, name: m.name ?? m.id })) }); return;
           }
-          if (url === '/sessions' && req.method === 'GET') { sendJson(res, 200, { managed: [...managed], monitoring: [] }); return; }
+          if (url === '/sessions' && req.method === 'GET') { sendJson(res, 200, { managed: managed.list(), monitoring: [] }); return; }
+          if (url === '/managed' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            const session = typeof body.session === 'string' ? body.session.trim() : '';
+            if (!session || typeof body.managed !== 'boolean') { sendJson(res, 400, { error: 'need {session, managed}' }); return; }
+            if (await setManaged(session, body.managed) === 'not-found') { sendJson(res, 404, { error: 'no such session' }); return; }
+            sendJson(res, 200, { managed: managed.list() });
+            return;
+          }
           if (url === '/agents' && req.method === 'GET') {
             // List all available agents/sessions (so the user/Jarvis knows which
             // sessions can be targeted by inject_to_session).
@@ -477,50 +540,17 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             return;
           }
           if (url === '/messages' && req.method === 'GET') {
-            // Return the Jarvis session's conversation (messages with role + text)
-            // so the悬浮窗 can display Jarvis's replies inline (the session may
-            // not be visible in DSH Desktop's workspace).
+            // Jarvis's own conversation by default; `?session=<id>` reads a worker's,
+            // so switching the send target also switches what the panel shows.
             try {
-              const s = jarvisHandle?.agent?.session;
+              const wanted = new URL(req.url ?? '', 'http://x').searchParams.get('session') ?? '';
+              if (wanted && !listWorkerIds(ctx, entry).includes(wanted)) { sendJson(res, 404, { error: 'no such session' }); return; }
+              const s = wanted
+                ? (ctx as any).get?.('agents')?.get?.(wanted)?.session
+                : jarvisHandle?.agent?.session;
               if (!s) { sendJson(res, 200, { messages: [], error: 'no session' }); return; }
-              let msgs: any[] = [];
-              try { msgs = s.deriveMessages() ?? []; } catch (e1) {
-                debug(entry, '/messages: deriveMessages err: ' + (e1 instanceof Error ? e1.message : String(e1)));
-                try {
-                  const events = (s.snapshotEvents?.() ?? s.ownEvents?.() ?? []) as any[];
-                  msgs = events.map((ev: any) => { try { return s.deriveEventMessage?.(ev); } catch { return null; } }).filter(Boolean);
-                } catch (e2) { debug(entry, '/messages: snapshot err: ' + (e2 instanceof Error ? e2.message : String(e2))); }
-              }
-              const conv = msgs.map((m: any, index: number) => {
-                const textParts: string[] = [];
-                const toolCalls: any[] = [];
-                let routedTo: string | undefined;
-                if (Array.isArray(m?.content)) {
-                  for (const b of m.content) {
-                    if (b?.type === 'text') textParts.push(String(b.text));
-                    if (b?.type === 'toolCall' || b?.type === 'tool_call') {
-                      const raw = b?.arguments ?? b?.input;
-                      let args: any = raw;
-                      if (typeof raw === 'string') { try { args = JSON.parse(raw); } catch { args = undefined; } }
-                      if (b?.name === 'inject_to_session' && typeof args?.session === 'string') routedTo = args.session;
-                      toolCalls.push({ name: String(b?.name ?? '?'), args: (typeof raw === 'string' ? raw : JSON.stringify(raw ?? '')).slice(0, 200) });
-                    }
-                  }
-                }
-                const role = String(m?.role ?? '?');
-                let text = textParts.join('');
-                const routed = role === 'user' ? ROUTED_INPUT.exec(text) : null;
-                if (routed) { routedTo = routed[1]; text = routed[2] ?? ''; }
-                return {
-                  id: String(m?.id ?? 'm' + index),
-                  role,
-                  text,
-                  routedTo,
-                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                };
-              }).filter((m: any) => (m.role === 'user' || m.role === 'assistant')
-                && (m.text.length > 0 || (m.toolCalls && m.toolCalls.length > 0)));
-              sendJson(res, 200, { messages: conv.slice(-20), count: conv.length });
+              const conv = toConversation(readSessionMessages(s, entry));
+              sendJson(res, 200, { messages: conv, count: conv.length });
             } catch (e) { sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) }); }
             return;
           }
@@ -574,7 +604,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             if (!text) { sendJson(res, 400, { error: 'empty text' }); return; }
             if (!jarvisHandle) { sendJson(res, 503, { error: 'jarvis agent not ready' }); return; }
             const jarvisText = session
-              ? `用户要求把以下内容发给会话 ${session}。请优化说法后用 inject_to_session 发送：\n\n${text}`
+              ? routedInput(session, text)
               : text;
             const msg: UserMessage = {
               id: MessageId(`jarvis-input-${Date.now().toString(36)}`),
@@ -631,7 +661,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       agentOptions: { provider: entry.provider, model: entry.model },
       setup: (agentCtx: Context) => {
         debug(entry, 'setup callback FIRED — decorating Jarvis agent');
-        decorateJarvisAgent(agentCtx, entry, ctx);
+        decorateJarvisAgent(agentCtx, entry, deps);
       },
     }).then((handle: any) => {
       jarvisHandle = handle;
@@ -647,7 +677,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           agentOptions: { provider: entry.provider, model: entry.model },
           setup: (agentCtx: Context) => {
             debug(entry, 'resume setup callback FIRED — decorating');
-            decorateJarvisAgent(agentCtx, entry, ctx);
+            decorateJarvisAgent(agentCtx, entry, deps);
           },
         }).then((handle: any) => {
           jarvisHandle = handle;
@@ -784,32 +814,28 @@ async function speakGreeting(
   tts: { synthesize: (text: string, outFile: string) => Promise<unknown>; play: (file: string) => unknown },
   entry: JarvisConfig,
 ): Promise<void> {
-  if (voiceMuted) { debug(entry, 'speakGreeting: muted, skipped'); return; }
   const text = pickGreeting(entry);
-  debug(entry, 'speakGreeting: picked "' + text + '"');
-  // 1) voice-mini /test (chime + TTS, no LLM)
-  if (webOrigin) {
-    const ok = await speakViaVoiceMini(webOrigin, text, entry);
-    if (ok) { debug(entry, 'speakGreeting: via voice-mini /test (chime+TTS) — "' + text + '"'); return; }
-    debug(entry, 'speakGreeting: voice-mini /test unavailable/failed → built-in fallback');
-  } else {
-    debug(entry, 'speakGreeting: webOrigin not captured yet → built-in fallback');
-  }
-  // 2) built-in edge-tts fallback (cached per greeting text)
+  debug(entry, 'speakGreeting: picked "' + text + '" → ' + await speakAsJarvis(tts, entry, text));
+}
+
+/** Jarvis's own voice (greetings, say_to_user): voice-mini /test with the
+ *  Jarvis chime when present, otherwise the built-in edge-tts (cached per text). */
+async function speakAsJarvis(
+  tts: { synthesize: (text: string, outFile: string) => Promise<unknown>; play: (file: string) => unknown },
+  entry: JarvisConfig,
+  text: string,
+): Promise<SpeakResult> {
+  if (voiceMuted) return 'muted';
+  if (webOrigin && await speakViaVoiceMini(webOrigin, text, entry)) return 'voice-mini';
   try {
-    const audioDir = resolveDir(entry.audioDir);
-    const textHash = Buffer.from(text, 'utf8').toString('base64url').slice(0, 16);
-    const outFile = join(audioDir, `greet-restart-${textHash}.mp3`);
-    if (!existsSync(outFile)) {
-      await tts.synthesize(text, outFile);
-      debug(entry, 'speakGreeting: synthesized "' + text + '" → ' + outFile);
-    } else {
-      debug(entry, 'speakGreeting: reused cached ' + outFile);
-    }
+    const hash = createHash('sha1').update(text).digest('hex').slice(0, 16);
+    const outFile = join(resolveDir(entry.audioDir), `say-${hash}.mp3`);
+    if (!existsSync(outFile)) await tts.synthesize(text, outFile);
     void tts.play(outFile);
-    debug(entry, 'speakGreeting: built-in edge-tts playing (no LLM, no session text)');
+    return 'built-in';
   } catch (e) {
-    debug(entry, 'speakGreeting built-in failed: ' + (e instanceof Error ? e.message : String(e)));
+    debug(entry, 'speakAsJarvis built-in failed: ' + (e instanceof Error ? e.message : String(e)));
+    return 'failed';
   }
 }
 
@@ -911,6 +937,20 @@ async function voiceMiniControl(origin: string | null, action: string): Promise<
   } catch { return false; }
 }
 
+/** A live session's messages; falls back to deriving them event by event. */
+function readSessionMessages(s: any, entry: JarvisConfig): unknown[] {
+  try { return s.deriveMessages() ?? []; } catch (e1) {
+    debug(entry, '/messages: deriveMessages err: ' + (e1 instanceof Error ? e1.message : String(e1)));
+    try {
+      const events = (s.snapshotEvents?.() ?? s.ownEvents?.() ?? []) as any[];
+      return events.map((ev: any) => { try { return s.deriveEventMessage?.(ev); } catch { return null; } }).filter(Boolean);
+    } catch (e2) {
+      debug(entry, '/messages: snapshot err: ' + (e2 instanceof Error ? e2.message : String(e2)));
+      return [];
+    }
+  }
+}
+
 /** `running` per the agents service, or undefined when it can't tell. */
 function agentRunning(ctx: Context, id: string): boolean | undefined {
   try {
@@ -962,7 +1002,7 @@ function trySetTitle(titleService: any, entry: JarvisConfig, title: string): voi
 }
 
 // ── 挂点2: decorate Jarvis agent (via agentCtx from setup callback) ────
-function decorateJarvisAgent(agentCtx: Context, entry: JarvisConfig, ctx: Context): void {
+function decorateJarvisAgent(agentCtx: Context, entry: JarvisConfig, deps: JarvisDeps): void {
   debug(entry, 'decorateJarvisAgent started');
   // Use agentCtx.inject (not ctx.inject) so section registers on AGENT scope
   agentCtx.inject(['systemPrompt' as any], () => {
@@ -979,45 +1019,73 @@ function decorateJarvisAgent(agentCtx: Context, entry: JarvisConfig, ctx: Contex
     debug(entry, 'persona section registered OK');
   });
 
-  registerJarvisTools(agentCtx, entry);
+  registerJarvisTools(agentCtx, entry, deps);
 }
 
-function registerJarvisTools(agentCtx: Context, entry: JarvisConfig): void {
+const textOutput = {
+  schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } },
+  render: (_args: unknown, value: unknown) => [{ type: 'text', text: String((value as { text?: unknown })?.text ?? '') }],
+};
+
+/** Human-readable session line for the model: title, workspace, status, id. */
+function describeSession(s: SessionRow): string {
+  const name = s.title || '(无标题)';
+  return `- ${name}${s.workspace ? ` [${s.workspace}]` : ''} · ${s.status} · id=${s.id}`;
+}
+
+function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: JarvisDeps): void {
   const tools = (agentCtx as any).tools as { register: (t: unknown) => () => void } | undefined;
   debug(entry, 'tools=' + (tools ? 'found' : 'UNDEFINED'));
   if (!tools) { debug(entry, 'tools NOT found — cannot register'); return; }
   const selfId = entry.jarvisSessionId;
+  const text = (t: string) => ({ text: t });
 
   tools.register(defineTool({
     name: 'say_to_user',
-    description: '口播给用户一句话。一两句,别读代码/路径/markdown。',
+    description: '用贾维斯自己的声音口播给用户一句话(带提示音)。一两句,别读代码/路径/markdown。',
     parameters: { text: { type: 'string' as const, required: true } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
+    output: textOutput,
     isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §5: synth + play'); },
+    async execute(args: { text: string }) {
+      const line = String(args.text ?? '').trim();
+      if (!line) throw new Error('say_to_user: text must not be empty');
+      const how = await deps.say(line);
+      return text(how === 'muted' ? '用户已静音,没有播放' : how === 'failed' ? '播放失败' : '已播放');
+    },
   } as never));
 
   tools.register(defineTool({
     name: 'ask_user',
-    description: '问用户拿回答(是否执行思路、续轮批准、审批 relay)。',
-    parameters: { question: { type: 'string' as const, required: true }, choices: { type: 'array' } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
-    isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §7: userQuestions.ask'); },
+    description: '问用户一个问题并等待回答(悬浮窗和 DSH 窗口都会弹出)。有固定选项时给 choices。',
+    parameters: {
+      question: { type: 'string' as const, required: true },
+      choices: { type: 'array' as const, items: { type: 'string' as const } },
+    },
+    output: textOutput,
+    isConcurrencySafe: () => false,
+    async execute(args: { question: string; choices?: unknown }, exec: { agent?: unknown; signal?: AbortSignal } | undefined) {
+      const question = String(args.question ?? '').trim();
+      if (!question) throw new Error('ask_user: question must not be empty');
+      const choices = Array.isArray(args.choices)
+        ? args.choices.map((c) => String(c).trim()).filter((c) => c.length > 0) : [];
+      const answer = await deps.ask(question, choices, exec);
+      return text(answer ? `用户回答:${answer}` : '用户没有给出回答');
+    },
   } as never));
 
   tools.register(defineTool({
     name: 'inject_to_session',
-    description: '向某托管会话发内容。target 不能是自己,且 ∈ 托管集。',
+    description: '向托管会话发内容,对方会立刻开始处理。target 不能是自己,且必须在托管集里。',
     parameters: { session: { type: 'string' as const, required: true }, message: { type: 'string' as const, required: true } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
+    output: textOutput,
     isConcurrencySafe: () => true,
     async execute(args: { session: string; message: string }) {
       if (args.session === selfId) throw new Error('inject_to_session: cannot target self');
-      const agents = (agentCtx as any).get?.('agents') as { get(id: string): any } | undefined;
-      const target = agents?.get(args.session);
+      if (!deps.managed.has(args.session)) {
+        throw new Error('inject_to_session: 该会话不在托管集,请先让用户把它交给你(manage_session)');
+      }
+      const target = (agentCtx as any).get?.('agents')?.get?.(args.session);
       if (!target) throw new Error('inject_to_session: target not found');
-      // TODO §9.2: enforce target ∈ managed set
       // TODO §3.2: acquire output lock
       const note: UserMessage = {
         id: MessageId(`jarvis-${Date.now().toString(36)}`),
@@ -1025,54 +1093,52 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig): void {
         content: [{ type: 'text', text: args.message }],
         source: { kind: 'plugin', plugin: 'dsh-harness-jarvis', form: 'notice', summary: 'jarvis inject' },
       };
-      try { target.inject(note); } catch { /* disposed */ }
-      return { ok: true };
+      const how = deliver(target, note);
+      if (!how) throw new Error('inject_to_session: target accepts no messages');
+      return text(how === 'steer' ? '已插入对方正在进行的这一轮' : '已发送,对方开始处理');
     },
   } as never));
 
   tools.register(defineTool({
-    name: 'monitor_session',
-    description: '把某托管会话纳入监听。',
-    parameters: { session: { type: 'string' as const, required: true } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
-    isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §8: add to monitor set'); },
-  } as never));
-
-  tools.register(defineTool({
-    name: 'stop_monitoring',
-    description: '停止监听某会话。',
-    parameters: { session: { type: 'string' as const, required: true } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
-    isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §8: remove from monitor set'); },
-  } as never));
-
-  tools.register(defineTool({
-    name: 'recall',
-    description: '检索记忆(temp JSONL + 长期 HTML),返回关键点 + 源指针。',
-    parameters: { query: { type: 'string' as const, required: true } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
-    isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §10: grep memory'); },
-  } as never));
-
-  tools.register(defineTool({
-    name: 'remember',
-    description: '显式写一条长期记忆(HTML)。',
-    parameters: { tag: { type: 'string' as const, required: true }, content: { type: 'string' as const, required: true }, intent: { type: 'string' }, session: { type: 'string' } },
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
-    isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §10: write HTML memory'); },
-  } as never));
-
-  tools.register(defineTool({
     name: 'list_managed',
-    description: '返回托管集 + 当前监听集。',
+    description: '列出托管集里的会话,以及可以交给你的其他会话(标题、工作区、状态、id)。',
     parameters: {},
-    output: { schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' } } }, render: () => [{ type: 'text', text: 'ok' }] },
+    output: textOutput,
     isConcurrencySafe: () => true,
-    async execute() { throw new Error('TODO §9.2: return managed + monitor sets'); },
+    async execute() {
+      const rows = await deps.sessionRows();
+      const mine = rows.filter((r) => r.managed);
+      const others = rows.filter((r) => !r.managed);
+      return text([
+        `托管中(${mine.length}):`, ...(mine.length ? mine.map(describeSession) : ['(无)']),
+        `可交给你的其他会话(${others.length}):`, ...(others.length ? others.map(describeSession) : ['(无)']),
+      ].join('\n'));
+    },
+  } as never));
+
+  tools.register(defineTool({
+    name: 'manage_session',
+    description: '把一个会话纳入托管集(用户明确说交给你时才用)。session 用 list_managed 里的 id。',
+    parameters: { session: { type: 'string' as const, required: true } },
+    output: textOutput,
+    isConcurrencySafe: () => true,
+    async execute(args: { session: string }) {
+      if (args.session === selfId) throw new Error('manage_session: cannot manage self');
+      if (await deps.setManaged(args.session, true) === 'not-found') throw new Error('manage_session: 找不到这个会话');
+      return text('已纳入托管');
+    },
+  } as never));
+
+  tools.register(defineTool({
+    name: 'release_session',
+    description: '把一个会话移出托管集。',
+    parameters: { session: { type: 'string' as const, required: true } },
+    output: textOutput,
+    isConcurrencySafe: () => true,
+    async execute(args: { session: string }) {
+      await deps.setManaged(args.session, false);
+      return text('已移出托管');
+    },
   } as never));
 }
 

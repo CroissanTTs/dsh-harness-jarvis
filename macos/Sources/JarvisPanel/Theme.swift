@@ -6,6 +6,7 @@ enum Theme {
   static let cyan = Color(nsColor: OrbTint.cyan.color)
   static let amber = Color(nsColor: OrbTint.amber.color)
   static let red = Color(nsColor: OrbTint.red.color)
+  static let violet = Color(nsColor: OrbTint.violet.color)
   static let text = Color.white.opacity(0.92)
   static let dim = Color.white.opacity(0.55)
   static let faint = Color.white.opacity(0.35)
@@ -18,6 +19,7 @@ enum Theme {
     case .cyan: return cyan
     case .amber: return amber
     case .red: return red
+    case .violet: return violet
     }
   }
 

@@ -133,6 +133,21 @@ public final class PanelModel: ObservableObject {
     }
   }
 
+  private var hostVersion = -1
+
+  /// Returns as soon as the host reports a change (speech start/end, turns,
+  /// pending) or after `timeout`. Against a host without the change feed, or
+  /// while it is unreachable, this is a plain `timeout` sleep.
+  public func waitForChange(timeout: TimeInterval) async {
+    do {
+      hostVersion = try await api.waitForChange(after: hostVersion, timeout: timeout)
+      // A line's end and the next line's start arrive back to back; read them as one change.
+      try? await Task.sleep(for: .milliseconds(50))
+    } catch {
+      try? await Task.sleep(for: .seconds(max(0, timeout)))
+    }
+  }
+
   private func loadMessages() async {
     if let list = try? await api.messages() { messages = list }
   }

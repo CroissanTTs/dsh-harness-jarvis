@@ -55,10 +55,6 @@ let webOrigin: string | null = null;
  *  can inject user messages into the agent (user → jarvis → response). */
 let jarvisHandle: any = null;
 
-/** Wall-clock ms until which Jarvis is "speaking" (a TTS greeting is in flight).
- *  The悬浮窗 polls /jarvis/state and pulses the orb while speaking is true. */
-let speakingUntil = 0;
-
 /** Set from the悬浮窗 voice button; suppresses greetings until unmuted. */
 let voiceMuted = false;
 let playingChild: ChildProcess | null = null;
@@ -68,7 +64,6 @@ const titleCache: { at: number; map: Record<string, string> } = { at: 0, map: {}
 
 /** Stops the built-in afplay playback. voice-mini playback is out of our reach. */
 function stopSpeech(): void {
-  speakingUntil = 0;
   if (playingChild && !playingChild.killed) { try { playingChild.kill('SIGTERM'); } catch {} }
   playingChild = null;
 }
@@ -318,9 +313,14 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
 
   // ── provide 'jarvis' service so voice-mini (and other plugins) auto-detect
   //    us. voice-mini does ctx.inject(['jarvis']) → flips jarvisLinked (shows
-  //    the Jarvis panel section). Minimal contract: who we are + our session
-  //    id (voice-mini can use it to single out Jarvis's session for narration).
-  ctx.provide('jarvis' as any, { sessionId: entry.jarvisSessionId, cwd: resolveDir(entry.jarvisCwd) });
+  //    the Jarvis panel section). Contract: who we are + our session id
+  //    (voice-mini singles out Jarvis's session for narration), and speech():
+  //    voice-mini reports every line it plays so the orb talks in step with it.
+  ctx.provide('jarvis' as any, {
+    sessionId: entry.jarvisSessionId,
+    cwd: resolveDir(entry.jarvisCwd),
+    speech: (signal: unknown) => live.speechSignal(signal),
+  });
   debug(entry, 'provided "jarvis" service (sessionId=' + entry.jarvisSessionId + ')');
   ctx.logger?.warn?.('dsh-harness-jarvis: provided "jarvis" service');
   let llm: unknown;
@@ -355,8 +355,9 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         const url = (req.url ?? '').replace(/^\/jarvis/, '').split('?')[0] ?? '/';
         try {
           if (url === '/state' && req.method === 'GET') {
-            const narration = await voiceMiniSpeech(webOrigin);
-            const speaking = Date.now() < speakingUntil || playingChild !== null || narration.speaking;
+            const narration = await voiceMiniQueue(webOrigin);
+            const speech = live.speech() ?? (playingChild !== null ? { source: 'jarvis' as const } : null);
+            const speaking = speech !== null;
             const ids = listWorkerIds(ctx, entry);
             if (Date.now() - titleCache.at > 10_000 || ids.some((id) => !(id in titleCache.map))) {
               titleCache.map = (await readTitleMap(ctx, ids)).map;
@@ -372,7 +373,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               speaking,
               activity: live.activity(speaking, agentRunning(ctx, entry.jarvisSessionId)),
               error: live.error(),
-              voice: { speaking, muted: voiceMuted, paused: narration.paused, queued: narration.queued },
+              voice: {
+                speaking,
+                ...(speech ? { source: speech.source, ...(speech.sessionId ? { sessionId: speech.sessionId } : {}) } : {}),
+                muted: voiceMuted, paused: narration.paused, queued: narration.queued,
+              },
               counts: {
                 running: sessions.filter((s) => s.status === 'running').length,
                 pending: pending.length,
@@ -382,6 +387,17 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               sessions,
               pending,
             });
+            return;
+          }
+          if (url === '/wait' && req.method === 'GET') {
+            const params = new URL(req.url ?? '', 'http://x').searchParams;
+            const since = Number(params.get('since'));
+            const timeout = Number(params.get('timeout') ?? '1000');
+            const version = await live.waitForChange(
+              Number.isFinite(since) ? since : -1,
+              Number.isFinite(timeout) ? timeout : 1000,
+            );
+            sendJson(res, 200, { version });
             return;
           }
           if (url === '/pending/answer' && req.method === 'POST') {
@@ -760,7 +776,6 @@ async function speakGreeting(
   if (voiceMuted) { debug(entry, 'speakGreeting: muted, skipped'); return; }
   const text = pickGreeting(entry);
   debug(entry, 'speakGreeting: picked "' + text + '"');
-  speakingUntil = Date.now() + 6000; // orb pulses for ~6s while the greeting speaks
   // 1) voice-mini /test (chime + TTS, no LLM)
   if (webOrigin) {
     const ok = await speakViaVoiceMini(webOrigin, text, entry);
@@ -832,30 +847,39 @@ function readVoiceMiniRuntime(): { token?: string; rendererHeader?: { name: stri
   } catch { return null; }
 }
 
-/** voice-mini narrates Jarvis (and every other session), so its playback is
- *  what the user hears as "Jarvis speaking". Cached briefly: /jarvis/state is
+/** Who is speaking comes from voice-mini's jarvis.speech() signals; its queue
+ *  (paused / waiting lines) is read here. Cached briefly: /jarvis/state is
  *  polled every second and this is a same-host round trip. */
-type Narration = { speaking: boolean; paused: boolean; queued: number };
-const SILENT: Narration = { speaking: false, paused: false, queued: 0 };
+type Narration = { paused: boolean; queued: number };
+const SILENT: Narration = { paused: false, queued: 0 };
 const voiceMiniCache = { at: 0, value: SILENT };
-async function voiceMiniSpeech(origin: string | null): Promise<Narration> {
+async function voiceMiniQueue(origin: string | null): Promise<Narration> {
   if (!origin || Date.now() - voiceMiniCache.at < 400) return voiceMiniCache.value;
   voiceMiniCache.at = Date.now();
   const vm = readVoiceMiniRuntime();
   if (!vm?.token) { voiceMiniCache.value = SILENT; return SILENT; }
   try {
     const r = await fetch(origin + '/voice-mini/pet/state', {
-      headers: { Authorization: `Bearer ${vm.token}` },
+      headers: voiceMiniHeaders(vm),
       signal: AbortSignal.timeout(300),
     });
-    const body = r.ok ? await r.json() as { speaking?: unknown; paused?: unknown; queued?: unknown } : {};
+    const body = r.ok ? await r.json() as { paused?: unknown; queued?: unknown } : {};
     voiceMiniCache.value = {
-      speaking: body.speaking === true,
       paused: body.paused === true,
       queued: typeof body.queued === 'number' ? body.queued : 0,
     };
   } catch { /* keep the last value; voice-mini may be busy or absent */ }
   return voiceMiniCache.value;
+}
+
+/** The DSH webServer requires the renderer header on every route, besides voice-mini's bearer. */
+function voiceMiniHeaders(vm: ReturnType<typeof readVoiceMiniRuntime>): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (vm?.token) headers['Authorization'] = `Bearer ${vm.token}`;
+  if (vm?.rendererHeader && typeof vm.rendererHeader.name === 'string') {
+    headers[vm.rendererHeader.name] = String(vm.rendererHeader.value);
+  }
+  return headers;
 }
 
 /** Playback control is voice-mini's; Jarvis only forwards the signal. */
@@ -868,12 +892,7 @@ const VOICE_MINI_CONTROL: Record<string, string> = {
 async function voiceMiniControl(origin: string | null, action: string): Promise<boolean> {
   const path = VOICE_MINI_CONTROL[action];
   if (!origin || !path) return false;
-  const vm = readVoiceMiniRuntime();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (vm?.token) headers['Authorization'] = `Bearer ${vm.token}`;
-  if (vm?.rendererHeader && typeof vm.rendererHeader.name === 'string') {
-    headers[vm.rendererHeader.name] = String(vm.rendererHeader.value);
-  }
+  const headers = { 'Content-Type': 'application/json', ...voiceMiniHeaders(readVoiceMiniRuntime()) };
   voiceMiniCache.at = 0;
   try {
     const r = await fetch(origin + path, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(1500) });

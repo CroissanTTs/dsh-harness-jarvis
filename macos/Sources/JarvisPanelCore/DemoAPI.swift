@@ -18,10 +18,10 @@ public actor DemoAPI: JarvisAPI {
   }
 
   private enum Scene: Int, CaseIterable {
-    case idle, awaiting, thinking, speaking, attention, failed
+    case idle, awaiting, thinking, speaking, attention, failed, narrating
   }
 
-  /// Freezes the demo on one scene (0 idle … 5 failed, wrapping); nil resumes the clock.
+  /// Freezes the demo on one scene (0 idle … 6 narrating, wrapping); nil resumes the clock.
   public func setScene(_ index: Int?) {
     pinned = index
   }
@@ -61,22 +61,33 @@ public actor DemoAPI: JarvisAPI {
     switch scene {
     case .awaiting: activity = .awaiting
     case .thinking: activity = .thinking
-    case .speaking: activity = .speaking
+    case .speaking, .narrating: activity = .speaking
     default: activity = .idle
     }
     var list = sessions
     if read { list = list.map { var s = $0; s.unread = false; return s } }
     if scene == .failed { list[0].status = .failed }
+    let voice: VoiceState
+    switch scene {
+    case .speaking: voice = VoiceState(speaking: true, source: .jarvis, muted: muted, queued: 2)
+    case .narrating: voice = VoiceState(speaking: true, source: .session, sessionId: "demo-docs", muted: muted)
+    default: voice = VoiceState(muted: muted)
+    }
     return Snapshot(
       agentId: "demo-jarvis",
       activity: activity,
       error: nil,
-      voice: VoiceState(speaking: scene == .speaking, muted: muted, queued: scene == .speaking ? 2 : 0),
+      voice: voice,
       counts: Counts(running: scene == .failed ? 1 : 2, pending: pending.count,
                      unread: read ? 0 : 1, failed: scene == .failed ? 1 : 0),
       sessions: list,
       pending: pending
     )
+  }
+
+  public func waitForChange(after: Int, timeout: TimeInterval) async throws -> Int {
+    try await Task.sleep(for: .seconds(max(0, timeout)))
+    return after + 1
   }
 
   public func messages() async throws -> [ChatMessage] {

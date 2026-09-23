@@ -48,6 +48,10 @@ export interface PendingWire {
 }
 
 export interface AnswerBody { id?: unknown; decision?: unknown; choice?: unknown; text?: unknown }
+
+/** voice-mini → jarvis.speech(): one spoken line starting or ending. */
+export interface SpeechSignal { phase: 'start' | 'end'; id: string; source: 'jarvis' | 'session'; sessionId?: string }
+export interface Speech { source: 'jarvis' | 'session'; sessionId?: string }
 export type AnswerResult = 'ok' | 'not-found' | 'invalid';
 
 interface HeldApproval {
@@ -86,6 +90,11 @@ const FAILED_KINDS: Record<string, string> = {
 export const PENDING_GRACE_MS = 600;
 /** How long "sent, waiting for Jarvis to pick it up" lasts before giving up. */
 export const AWAITING_TIMEOUT_MS = 20_000;
+/** A start whose end never arrived (voice-mini reloaded mid-line) expires after this.
+ *  voice-mini caps one clip's playback at 30s. */
+export const SPEECH_STALE_MS = 45_000;
+/** Upper bound for one GET /jarvis/wait. */
+export const MAX_WAIT_MS = 25_000;
 const QUESTION_SEP = '#';
 
 export class LiveState {
@@ -94,12 +103,59 @@ export class LiveState {
   private readonly unread = new Set<string>();
   private readonly held = new Map<string, Held>();
   private awaitingAt = 0;
+  private speaking: (Speech & { id: string; at: number }) | null = null;
+  private seq = 0;
+  private readonly waiters = new Set<() => void>();
   private readonly jarvisId: string;
   private readonly now: () => number;
 
   constructor(jarvisId: string, now: () => number = Date.now) {
     this.jarvisId = jarvisId;
     this.now = now;
+  }
+
+  // ── change feed (GET /jarvis/wait) ────────────────────────────────────
+
+  get version(): number { return this.seq; }
+
+  /** Resolves with the new version once anything changes after `after`, or at the timeout. */
+  waitForChange(after: number, timeoutMs: number): Promise<number> {
+    if (this.seq !== after) return Promise.resolve(this.seq);
+    return new Promise((resolve) => {
+      const done = () => { clearTimeout(timer); this.waiters.delete(done); resolve(this.seq); };
+      const timer = setTimeout(done, Math.max(0, Math.min(timeoutMs, MAX_WAIT_MS)));
+      this.waiters.add(done);
+    });
+  }
+
+  private bump(): void {
+    this.seq += 1;
+    for (const w of [...this.waiters]) w();
+  }
+
+  // ── speech (voice-mini → jarvis.speech) ───────────────────────────────
+
+  speechSignal(raw: unknown): void {
+    const s = raw as Partial<SpeechSignal> | null;
+    if (!s || typeof s.id !== 'string' || !s.id) return;
+    if (s.phase === 'start') {
+      const source = s.source === 'session' ? 'session' : 'jarvis';
+      this.speaking = {
+        id: s.id, source, at: this.now(),
+        ...(typeof s.sessionId === 'string' && s.sessionId ? { sessionId: s.sessionId } : {}),
+      };
+      this.bump();
+    } else if (s.phase === 'end' && this.speaking?.id === s.id) {
+      this.speaking = null;
+      this.bump();
+    }
+  }
+
+  /** Who is talking right now, if anyone. */
+  speech(): Speech | null {
+    const s = this.speaking;
+    if (!s || this.now() - s.at >= SPEECH_STALE_MS) return null;
+    return { source: s.source, ...(s.sessionId ? { sessionId: s.sessionId } : {}) };
   }
 
   // ── session events ────────────────────────────────────────────────────
@@ -109,6 +165,7 @@ export class LiveState {
     this.unread.delete(session);
     this.lastTurns.delete(session);
     if (session === this.jarvisId) this.awaitingAt = 0;
+    this.bump();
   }
 
   turnEnded(session: string, reason: { kind?: unknown; error?: any } | undefined): void {
@@ -122,10 +179,11 @@ export class LiveState {
     }
     this.lastTurns.set(session, turn);
     if (kind === 'completed' && session !== this.jarvisId) this.unread.add(session);
+    this.bump();
   }
 
   /** The user typed into the panel; Jarvis has not started its turn yet. */
-  userSent(): void { this.awaitingAt = this.now(); }
+  userSent(): void { this.awaitingAt = this.now(); this.bump(); }
 
   /** Clears unread and failed marks for one session, or for all when omitted. */
   markRead(session?: string): void {
@@ -133,9 +191,12 @@ export class LiveState {
       this.unread.delete(id);
       if (this.lastTurns.get(id)?.failed) this.lastTurns.delete(id);
     };
-    if (session) { clear(session); return; }
-    for (const id of [...this.unread]) clear(id);
-    for (const [id, turn] of [...this.lastTurns]) if (turn.failed) clear(id);
+    if (session) clear(session);
+    else {
+      for (const id of [...this.unread]) clear(id);
+      for (const [id, turn] of [...this.lastTurns]) if (turn.failed) clear(id);
+    }
+    this.bump();
   }
 
   // ── derived state ─────────────────────────────────────────────────────
@@ -197,18 +258,18 @@ export class LiveState {
     const downstream = new AbortController();
     const restore = swapSignal(req, downstream.signal);
     const fromPanel = new Promise<ApprovalOutcome>((resolve) => {
-      this.held.set(id, {
+      this.hold({
         kind: 'approval', id, session: String(req.agent.id), at: this.now(), toolName: req.toolName,
         ...(command ? { command } : {}),
         ...(req.reason ? { reason: req.reason } : {}),
         resolve,
       });
-      original?.addEventListener('abort', () => { this.held.delete(id); }, { once: true });
+      original?.addEventListener('abort', () => { this.release(id); }, { once: true });
     });
     return Promise.race([fromPanel, Promise.resolve().then(next)]).finally(() => {
       downstream.abort(new Error('Approval settled through another answerer'));
       restore();
-      this.held.delete(id);
+      this.release(id);
     });
   }
 
@@ -220,16 +281,16 @@ export class LiveState {
     const downstream = new AbortController();
     const restore = swapSignal(req, downstream.signal);
     const fromPanel = new Promise<QuestionAnswer>((resolve) => {
-      this.held.set(id, {
+      this.hold({
         kind: 'ask', id, session, at: this.now(), questions: req.questions, answers: new Map(), resolve,
       });
-      original?.addEventListener('abort', () => { this.held.delete(id); }, { once: true });
+      original?.addEventListener('abort', () => { this.release(id); }, { once: true });
     });
     return Promise.race([fromPanel, Promise.resolve().then(next)]).finally(() => {
       // Cancel only the losing answerer's wait, never the owning agent's signal.
       downstream.abort(new Error('Question settled through another answerer'));
       restore();
-      this.held.delete(id);
+      this.release(id);
     });
   }
 
@@ -245,7 +306,7 @@ export class LiveState {
     if (held.kind === 'approval') {
       if (sep >= 0) return 'not-found';
       if (body.decision !== 'allow' && body.decision !== 'deny') return 'invalid';
-      this.held.delete(heldId);
+      this.release(heldId);
       held.resolve(body.decision === 'allow' ? 'allowed-once' : 'rejected');
       return 'ok';
     }
@@ -263,10 +324,22 @@ export class LiveState {
     }
     held.answers.set(question.id, item);
     if (held.answers.size === held.questions.length) {
-      this.held.delete(heldId);
+      this.release(heldId);
       held.resolve({ answers: held.questions.map((q) => held.answers.get(q.id)!) });
+    } else {
+      this.bump();
     }
     return 'ok';
+  }
+
+  private hold(entry: Held): void {
+    this.held.set(entry.id, entry);
+    const timer = setTimeout(() => { if (this.held.has(entry.id)) this.bump(); }, PENDING_GRACE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  }
+
+  private release(id: string): void {
+    if (this.held.delete(id)) this.bump();
   }
 
   private visibleHeld(): Held[] {

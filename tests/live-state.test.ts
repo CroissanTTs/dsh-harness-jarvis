@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AWAITING_TIMEOUT_MS, LiveState, PENDING_GRACE_MS,
+  AWAITING_TIMEOUT_MS, LiveState, MAX_WAIT_MS, PENDING_GRACE_MS, SPEECH_STALE_MS,
   type ApprovalOutcome, type QuestionAnswer,
 } from '../src/live-state.ts';
 
@@ -149,6 +149,41 @@ describe('等价类', () => {
     assert.equal(req.signal, undefined);
   });
 
+  it('说话来源：贾维斯 / 其他会话，结束信号清掉', () => {
+    const { live } = setup();
+    assert.equal(live.speech(), null);
+    live.speechSignal({ phase: 'start', id: 's1', source: 'jarvis' });
+    assert.deepEqual(live.speech(), { source: 'jarvis' });
+    live.speechSignal({ phase: 'end', id: 's1', source: 'jarvis' });
+    assert.equal(live.speech(), null);
+    live.speechSignal({ phase: 'start', id: 's2', source: 'session', sessionId: 'worker' });
+    assert.deepEqual(live.speech(), { source: 'session', sessionId: 'worker' });
+  });
+
+  it('说话、回合、待处理的变化都会唤醒等待者', async () => {
+    const { live, clock } = setup();
+    const changes: Array<() => void> = [
+      () => live.speechSignal({ phase: 'start', id: 's', source: 'jarvis' }),
+      () => live.turnStarted('a'),
+      () => live.turnEnded('a', { kind: 'completed' }),
+      () => live.userSent(),
+      () => live.markRead('a'),
+    ];
+    for (const change of changes) {
+      const before = live.version;
+      const woke = live.waitForChange(before, 10_000);
+      change();
+      assert.equal(await woke, before + 1);
+    }
+    const down = waitingNext<ApprovalOutcome>();
+    void live.holdApproval({ agent: { id: 'a' }, toolName: 'bash' }, down.next);
+    clock.advance(PENDING_GRACE_MS);
+    const before = live.version;
+    const woke = live.waitForChange(before, 10_000);
+    live.answer({ id: live.pending()[0]!.id, decision: 'allow' });
+    assert.ok(await woke > before);
+  });
+
   it('已读：单个会话 / 全部', () => {
     const { live } = setup();
     for (const id of ['a', 'b']) { live.turnStarted(id); live.turnEnded(id, { kind: 'completed' }); }
@@ -216,6 +251,41 @@ describe('边界值', () => {
     live.turnStarted('a');
     live.turnEnded('a', undefined);
     assert.equal(live.status('a'), 'done');
+  });
+
+  it('开始信号没等到结束：到过期前一刻仍在说，到点后视为结束', () => {
+    const { live, clock } = setup();
+    live.speechSignal({ phase: 'start', id: 's', source: 'session', sessionId: 'w' });
+    clock.advance(SPEECH_STALE_MS - 1);
+    assert.notEqual(live.speech(), null);
+    clock.advance(1);
+    assert.equal(live.speech(), null);
+  });
+
+  it('新一句的开始直接接替上一句，旧句的结束信号不影响新句', () => {
+    const { live } = setup();
+    live.speechSignal({ phase: 'start', id: 'old', source: 'jarvis' });
+    live.speechSignal({ phase: 'start', id: 'new', source: 'session', sessionId: 'w' });
+    live.speechSignal({ phase: 'end', id: 'old', source: 'jarvis' });
+    assert.deepEqual(live.speech(), { source: 'session', sessionId: 'w' });
+  });
+
+  it('等待：版本已变立即返回；没变化到超时返回原版本', async () => {
+    const { live } = setup();
+    live.turnStarted('a');
+    assert.equal(await live.waitForChange(0, 10_000), live.version);
+    const started = Date.now();
+    assert.equal(await live.waitForChange(live.version, 30), live.version);
+    assert.ok(Date.now() - started >= 25);
+  });
+
+  it('待处理卡片满宽限期时再唤醒一次，让面板及时显示', async () => {
+    const { live } = setup();
+    void live.holdApproval({ agent: { id: 'a' }, toolName: 'bash' }, waitingNext<ApprovalOutcome>().next);
+    const before = live.version;
+    const started = Date.now();
+    assert.equal(await live.waitForChange(before, 5_000), before + 1);
+    assert.ok(Date.now() - started >= PENDING_GRACE_MS - 20);
   });
 
   it('新回合开始清掉上一轮的未读和失败', () => {
@@ -301,6 +371,31 @@ describe('异常路径', () => {
     clock.advance(PENDING_GRACE_MS);
     await assert.rejects(result, /boom/);
     assert.deepEqual(live.pending(), []);
+  });
+
+  it('不合法的说话信号被忽略', () => {
+    const { live } = setup();
+    for (const bad of [null, undefined, 'start', {}, { phase: 'start' }, { phase: 'start', id: '' }, { phase: 'talk', id: 'x' }]) {
+      live.speechSignal(bad);
+    }
+    assert.equal(live.speech(), null);
+    assert.equal(live.version, 0);
+  });
+
+  it('来源未知按贾维斯处理；结束一句从未开始的话不改变状态', () => {
+    const { live } = setup();
+    live.speechSignal({ phase: 'end', id: 'ghost', source: 'jarvis' });
+    assert.equal(live.version, 0);
+    live.speechSignal({ phase: 'start', id: 's', source: 'robot', sessionId: 42 });
+    assert.deepEqual(live.speech(), { source: 'jarvis' });
+  });
+
+  it('等待超时被限制在上限内', async () => {
+    const { live } = setup();
+    const started = Date.now();
+    await live.waitForChange(live.version, -5);
+    assert.ok(Date.now() - started < 100);
+    assert.ok(MAX_WAIT_MS <= 25_000);
   });
 
   it('信号不可写时仍能正常托管', async () => {

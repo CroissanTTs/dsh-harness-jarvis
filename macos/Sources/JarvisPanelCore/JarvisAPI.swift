@@ -32,6 +32,9 @@ extension JarvisAPIError: LocalizedError {
 /// means "talk to Jarvis directly" (no injection into a worker session).
 public protocol JarvisAPI: Sendable {
   func snapshot() async throws -> Snapshot
+  /// Blocks until the host's state version differs from `after` (or `timeout`
+  /// passes) and returns the current version.
+  func waitForChange(after: Int, timeout: TimeInterval) async throws -> Int
   func messages() async throws -> [ChatMessage]
   func send(text: String, target: String?) async throws
   func answer(_ answer: PendingAnswer) async throws

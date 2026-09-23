@@ -13,3 +13,16 @@ public enum FramePacing {
     return motion == .idle ? 30 : 60
   }
 }
+
+/// Tint crossfade: ease-in-out so a colour change drifts in rather than snapping.
+public enum ColorFade {
+  /// Shorter than `FramePacing.transitionSeconds`, so the fade always renders at full rate.
+  public static let seconds: Double = 0.9
+
+  /// Blend factor 0…1 after `elapsed` seconds (smoothstep).
+  public static func progress(elapsed: Double) -> Double {
+    guard elapsed.isFinite else { return elapsed > 0 ? 1 : 0 }
+    let x = min(1, max(0, elapsed / seconds))
+    return x * x * (3 - 2 * x)
+  }
+}

@@ -103,15 +103,26 @@ public struct PendingItem: Decodable, Sendable, Equatable, Identifiable {
   private enum CodingKeys: String, CodingKey { case id, kind, session, title, detail, note, choices }
 }
 
+/// Whose words are playing: Jarvis's own voice, or voice-mini narrating another session.
+public enum SpeechSource: String, Sendable, Equatable {
+  case jarvis, session
+}
+
 /// `paused` / `queued` describe voice-mini's narration queue, which Jarvis only drives.
+/// `source` is nil exactly when nothing is speaking.
 public struct VoiceState: Decodable, Sendable, Equatable {
   public var speaking = false
+  public var source: SpeechSource?
+  public var sessionId: String?
   public var muted = false
   public var paused = false
   public var queued = 0
 
-  public init(speaking: Bool = false, muted: Bool = false, paused: Bool = false, queued: Int = 0) {
+  public init(speaking: Bool = false, source: SpeechSource? = nil, sessionId: String? = nil,
+              muted: Bool = false, paused: Bool = false, queued: Int = 0) {
     self.speaking = speaking
+    self.source = speaking ? (source ?? .jarvis) : nil
+    self.sessionId = speaking ? sessionId : nil
     self.muted = muted
     self.paused = paused
     self.queued = queued
@@ -120,6 +131,11 @@ public struct VoiceState: Decodable, Sendable, Equatable {
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     speaking = try c.decodeIfPresent(Bool.self, forKey: .speaking) ?? false
+    if speaking {
+      let raw = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
+      source = raw.flatMap(SpeechSource.init(rawValue:)) ?? .jarvis
+      sessionId = (try? c.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
+    }
     muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
     queued = max(0, try c.decodeIfPresent(Int.self, forKey: .queued) ?? 0)
@@ -128,7 +144,7 @@ public struct VoiceState: Decodable, Sendable, Equatable {
   /// Something is playing, parked, or waiting to play.
   public var active: Bool { speaking || paused || queued > 0 }
 
-  private enum CodingKeys: String, CodingKey { case speaking, muted, paused, queued }
+  private enum CodingKeys: String, CodingKey { case speaking, source, sessionId, muted, paused, queued }
 }
 
 /// GET /jarvis/state. Decoding is lenient so the panel keeps working against an

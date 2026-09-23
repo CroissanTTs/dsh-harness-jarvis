@@ -175,6 +175,7 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
       fromColor = currentColor()
       toColor = target
       colorStart = now
+      beginTransition()
     }
     updatePacing()
   }
@@ -206,7 +207,7 @@ final class OrbMetalView: MTKView, MTKViewDelegate {
   }
 
   private func currentColor() -> SIMD4<Float> {
-    let f = Float(min(1, max(0, (now - colorStart) / 0.6)))
+    let f = Float(ColorFade.progress(elapsed: now - colorStart))
     return fromColor + (toColor - fromColor) * f
   }
 

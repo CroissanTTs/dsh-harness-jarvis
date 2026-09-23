@@ -93,7 +93,7 @@ final class AppController: NSObject {
       while !Task.isCancelled {
         guard let self else { return }
         await self.model.refresh()
-        try? await Task.sleep(for: .seconds(self.hidden ? 5 : 1))
+        await self.model.waitForChange(timeout: self.hidden ? 5 : 1)
       }
     }
     modelChanged()

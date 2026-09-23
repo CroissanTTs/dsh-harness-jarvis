@@ -54,6 +54,7 @@ final class SnapshotDecodingTests: XCTestCase {
   func testVoiceQueueFields() throws {
     let s = try decode(#"{"voice":{"speaking":false,"muted":false,"paused":true,"queued":3}}"#)
     XCTAssertEqual(s.voice, VoiceState(paused: true, queued: 3))
+    XCTAssertNil(s.voice.source)
     XCTAssertTrue(s.voice.active)
   }
 

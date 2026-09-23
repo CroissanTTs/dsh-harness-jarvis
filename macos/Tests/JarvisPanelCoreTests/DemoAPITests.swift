@@ -27,9 +27,18 @@ final class DemoAPITests: XCTestCase {
 
   func testOutOfRangeSceneWraps() async throws {
     let api = DemoAPI()
-    await api.setScene(8)
+    await api.setScene(9)
     let s = try await api.snapshot()
     XCTAssertEqual(s.activity, .thinking)
+  }
+
+  func testNarratingSceneIsAnotherSessionsVoice() async throws {
+    let api = DemoAPI()
+    await api.setScene(6)
+    let s = try await api.snapshot()
+    XCTAssertEqual(s.activity, .speaking)
+    XCTAssertEqual(s.voice.source, .session)
+    XCTAssertEqual(s.voice.sessionId, "demo-docs")
   }
 
   func testUnpinReturnsToClock() async throws {

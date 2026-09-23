@@ -46,6 +46,13 @@ public final class JarvisClient: JarvisAPI, @unchecked Sendable {
     do { return try JSONDecoder().decode(Snapshot.self, from: data) } catch { throw JarvisAPIError.decoding }
   }
 
+  public func waitForChange(after: Int, timeout: TimeInterval) async throws -> Int {
+    let ms = Int(max(0, timeout) * 1000)
+    let data = try await request("GET", "/jarvis/wait?since=\(after)&timeout=\(ms)", timeout: timeout + 5)
+    struct Reply: Decodable { var version: Int }
+    do { return try JSONDecoder().decode(Reply.self, from: data).version } catch { throw JarvisAPIError.decoding }
+  }
+
   public func messages() async throws -> [ChatMessage] {
     let data = try await request("GET", "/jarvis/messages")
     do { return try ChatMessages.decode(data) } catch { throw JarvisAPIError.decoding }
@@ -90,10 +97,11 @@ public final class JarvisClient: JarvisAPI, @unchecked Sendable {
     return file
   }
 
-  private func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> Data {
+  private func request(_ method: String, _ path: String, body: [String: Any]? = nil,
+                       timeout: TimeInterval = 5) async throws -> Data {
     let runtime = try loadRuntime()
     guard let url = URL(string: runtime.origin + path) else { throw JarvisAPIError.noRuntime }
-    var req = URLRequest(url: url, timeoutInterval: 5)
+    var req = URLRequest(url: url, timeoutInterval: timeout)
     req.httpMethod = method
     req.setValue("Bearer \(runtime.token)", forHTTPHeaderField: "Authorization")
     if let h = runtime.rendererHeader { req.setValue(h.value, forHTTPHeaderField: h.name) }

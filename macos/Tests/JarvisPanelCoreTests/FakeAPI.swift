@@ -8,6 +8,9 @@ actor FakeAPI: JarvisAPI {
   var sendError: JarvisAPIError?
   var answerError: JarvisAPIError?
   var voiceError: JarvisAPIError?
+  /// nil → behaves like an old host without /jarvis/wait (404).
+  var waitVersion: Int?
+  private(set) var waits: [(after: Int, timeout: TimeInterval)] = []
 
   private(set) var snapshotCalls = 0
   private(set) var sent: [(text: String, target: String?)] = []
@@ -21,10 +24,17 @@ actor FakeAPI: JarvisAPI {
   func setSendError(_ e: JarvisAPIError?) { sendError = e }
   func setAnswerError(_ e: JarvisAPIError?) { answerError = e }
   func setVoiceError(_ e: JarvisAPIError?) { voiceError = e }
+  func setWaitVersion(_ v: Int?) { waitVersion = v }
 
   func snapshot() async throws -> Snapshot {
     snapshotCalls += 1
     return try snapshotResult.get()
+  }
+
+  func waitForChange(after: Int, timeout: TimeInterval) async throws -> Int {
+    waits.append((after, timeout))
+    guard let waitVersion else { throw JarvisAPIError.http(404) }
+    return waitVersion
   }
 
   func messages() async throws -> [ChatMessage] {

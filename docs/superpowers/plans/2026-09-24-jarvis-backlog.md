@@ -33,7 +33,7 @@
 | J4 | 输出协调（播报合并、同一时间只问一个问题） | J2 | 中 | 已完成（`j4-output-20260924`） |
 | J0 | 修复贾维斯会话标题设置（改用 `rename`）（可并行） | — | 小 | 已完成（`j0-title-20260924`） |
 | J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 已完成（`j3-approval-records-20260924`） |
-| U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 待办 |
+| U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 已完成（`u2-task-state-20260924`） |
 | J8 | 清理：过期注释、残留字段、SPEC 同步（放在本阶段最后） | — | 小 | 待办 |
 
 ### 阶段 3：稳定性
@@ -468,7 +468,10 @@
 - **数据**：`/jarvis/state` 的每个 session 行加 `task`：`{ status: 'open'|'judging'|'unsatisfied', summary?: string }`，只输出未结任务（done/dropped 不输出）。`summary` 取 `lastVerdict.missing` 或请求原文前 30 字。
 - **面板**：`SessionInfo` 加 `task: TaskInfo?`（解码容错：缺失或类型错误为 nil）。目标列表行在标题右侧显示小标签："进行中" / "判断中" / "未完成"（未完成用黄色），悬停显示 summary。
 - **测试**：插件侧 state 行组装抽纯函数测试；面板侧解码与标签文案三段式；快照加 `18-targets-task-state`。
-- **实现记录**：（空）
+- **实现记录**（Codex U2 / 2026-09-24）：`src/session-state.ts` 抽出纯会话行组装，`src/index.ts` 经只读 `ledger.peekCurrent` 输出未结 task，避免状态轮询顺带写盘；`Snapshot.swift` 增加 `TaskInfo` / 标签文案，`PanelModel.swift` 传给目标项，`QuickBarView.swift` 在标题右侧显示三态标签、黄色未完成及悬停摘要。`DemoAPI.swift` / `Snapshotter.swift` 新增 `18-targets-task-state`，覆盖三态、有任务长标题及无任务行。
+  - 边界决定：非空白 missing 优先，否则原文按 Unicode 码点取前 30 字，保留原文空白，空摘要省略；done/dropped/过期任务均不输出。面板对缺失/null task、未知状态、错误容器或字段类型均降级为 task=nil，summary 缺失/null 仍保留合法任务。原有会话状态、快捷键和目标选择行为不变。
+  - 验证：插件纯函数及真实 `/jarvis/state` 接线、Swift 解码/标签/目标选择/演示移出行为均按等价类 / 边界值 / 异常路径测试；插件 **245/245**、面板 **217/217**、`npm run build`、`macos/build.sh`、差异检查通过，独立规格与质量审查无待修问题。快照生成后已用图像读取工具实际打开确认三态完整、黄色正确、长标题截断与快捷键正常，证据：[18-targets-task-state.png](../evidence/2026-09-24-u2-task-state/18-targets-task-state.png)。
+  - J1/J2 已在 main，从最新 main 建独立 worktree 与 `codex/u2-task-state`；标签 `u2-task-state-20260924` 定位含本记录的单个提交。合入后主目录重建插件/面板并重启面板；仍需用户重启 DSH 加载插件字段，再人工观察判断中→未完成/任务结束时的标签更新及悬停摘要。
 
 ### H1 全局快捷键呼出输入框
 

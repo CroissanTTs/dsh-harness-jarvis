@@ -18,10 +18,10 @@ public actor DemoAPI: JarvisAPI {
   }
 
   private enum Scene: Int, CaseIterable {
-    case idle, awaiting, thinking, speaking, attention, failed, narrating
+    case idle, awaiting, thinking, speaking, attention, failed, narrating, taskStates
   }
 
-  /// Freezes the demo on one scene (0 idle … 6 narrating, wrapping); nil resumes the clock.
+  /// Freezes the demo on one scene (0 idle … 7 task states, wrapping); nil resumes the clock.
   public func setScene(_ index: Int?) {
     pinned = index
   }
@@ -74,6 +74,14 @@ public actor DemoAPI: JarvisAPI {
     }
     if read { list = list.map { var s = $0; s.unread = false; return s } }
     if scene == .failed { list[0].status = .failed }
+    if scene == .taskStates {
+      list[0].title = "修复回归测试并检查工作区的全部构建结果"
+      list[0].task = TaskInfo(status: .open, summary: "修复测试后跑一遍 lint")
+      list[1].task = TaskInfo(status: .judging, summary: "确认数据库迁移已完成并通过回归测试")
+      list[2].task = TaskInfo(status: .unsatisfied, summary: "还缺少部署文档中的回滚步骤，以及迁移失败后的恢复流程和实际运行验证结果。")
+      list[3].title = "这是一个没有未结任务的长会话标题，用于确认目标选择和快捷键仍然可见且布局正常"
+      list[3].managed = managedOverride[list[3].id] ?? true
+    }
     let voice: VoiceState
     switch scene {
     case .speaking: voice = VoiceState(speaking: true, source: .jarvis, muted: muted, queued: 2)

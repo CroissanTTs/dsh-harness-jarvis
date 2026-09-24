@@ -164,6 +164,16 @@ struct TargetListView: View {
         HStack(spacing: 8) {
           Circle().fill(option.status == nil ? Theme.cyan : Theme.status(option.status)).frame(width: 6, height: 6)
           Text(option.label).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
+          if let task = option.task {
+            Text(task.status.label)
+              .font(.system(size: 9, weight: .medium))
+              .foregroundStyle(task.status == .unsatisfied ? Theme.amber : Theme.dim)
+              .padding(.horizontal, 4)
+              .padding(.vertical, 2)
+              .background(Capsule().fill((task.status == .unsatisfied ? Theme.amber : Color.white).opacity(0.10)))
+              .fixedSize()
+              .help(task.summary ?? "")
+          }
           if option.target == .jarvis {
             Text("直接对话").font(.system(size: 10)).foregroundStyle(Theme.faint)
           }

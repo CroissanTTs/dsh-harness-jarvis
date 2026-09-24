@@ -51,6 +51,7 @@ import { writeApproval } from './approval-store.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
+import { sessionRow, type SessionRow } from './session-state.ts';
 import { needsRename } from './title.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
@@ -223,15 +224,6 @@ interface JarvisDeps {
     continuation?: { session: string; task: string }) => Promise<string>;
 }
 
-interface SessionRow {
-  id: string;
-  title: string;
-  status: string;
-  unread: boolean;
-  managed: boolean;
-  workspace?: string;
-}
-
 type SpeakResult = 'voice-mini' | 'built-in' | 'muted' | 'failed';
 
 interface LockState { holder?: string; leaseUntil?: number; }
@@ -375,11 +367,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     }
     return ids.map((id) => {
       const workspace = sessionWorkspace(ctx, id);
-      return {
+      return sessionRow({
         id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
         managed: managed.has(id),
         ...(workspace ? { workspace } : {}),
-      };
+      }, ledger.peekCurrent(id));
     });
   };
 

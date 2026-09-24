@@ -8,6 +8,28 @@ public enum SessionStatus: String, Sendable, Equatable {
   case running, waiting, done, failed, idle
 }
 
+public enum TaskStatus: String, Decodable, Sendable, Equatable {
+  case open, judging, unsatisfied
+
+  public var label: String {
+    switch self {
+    case .open: return "进行中"
+    case .judging: return "判断中"
+    case .unsatisfied: return "未完成"
+    }
+  }
+}
+
+public struct TaskInfo: Decodable, Sendable, Equatable {
+  public var status: TaskStatus
+  public var summary: String?
+
+  public init(status: TaskStatus, summary: String? = nil) {
+    self.status = status
+    self.summary = summary
+  }
+}
+
 public struct Counts: Decodable, Sendable, Equatable {
   public var running = 0
   public var pending = 0
@@ -41,15 +63,17 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
   public var workspace: String?
   /// Handed to Jarvis: only these are send targets. Older hosts list no others, so absent means true.
   public var managed: Bool
+  public var task: TaskInfo?
 
   public init(id: String, title: String, status: SessionStatus, unread: Bool,
-              workspace: String? = nil, managed: Bool = true) {
+              workspace: String? = nil, managed: Bool = true, task: TaskInfo? = nil) {
     self.id = id
     self.title = title
     self.status = status
     self.unread = unread
     self.workspace = workspace
     self.managed = managed
+    self.task = task
   }
 
   public init(from decoder: Decoder) throws {
@@ -61,6 +85,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     let ws = ((try? c.decodeIfPresent(String.self, forKey: .workspace)) ?? nil)?.trimmingCharacters(in: .whitespaces)
     workspace = (ws?.isEmpty ?? true) ? nil : ws
     managed = ((try? c.decodeIfPresent(Bool.self, forKey: .managed)) ?? nil) ?? true
+    task = try? c.decodeIfPresent(TaskInfo.self, forKey: .task)
   }
 
   /// Display name without the "贾维斯-" / "[贾维斯]" worker prefix (SPEC §9.2).
@@ -72,7 +97,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     return t.isEmpty ? String(id.suffix(8)) : t
   }
 
-  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace, managed }
+  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace, managed, task }
 }
 
 public enum PendingKind: String, Sendable, Equatable {

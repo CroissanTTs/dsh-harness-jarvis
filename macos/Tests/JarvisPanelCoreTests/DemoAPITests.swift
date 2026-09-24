@@ -27,7 +27,7 @@ final class DemoAPITests: XCTestCase {
 
   func testOutOfRangeSceneWraps() async throws {
     let api = DemoAPI()
-    await api.setScene(9)
+    await api.setScene(10)
     let s = try await api.snapshot()
     XCTAssertEqual(s.activity, .thinking)
   }

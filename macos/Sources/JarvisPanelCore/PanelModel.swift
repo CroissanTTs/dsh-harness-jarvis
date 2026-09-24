@@ -23,6 +23,7 @@ public struct TargetOption: Identifiable, Equatable, Sendable {
   public var target: Target
   public var label: String
   public var status: SessionStatus?
+  public var task: TaskInfo? = nil
 }
 
 public enum Connection: Equatable, Sendable {
@@ -114,7 +115,7 @@ public final class PanelModel: ObservableObject {
   }
 
   private func option(_ s: SessionInfo) -> TargetOption {
-    TargetOption(target: .session(s.id), label: displayName(s), status: s.status)
+    TargetOption(target: .session(s.id), label: displayName(s), status: s.status, task: s.task)
   }
 
   /// A session named like Jarvis itself, or like another session, gets its

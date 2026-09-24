@@ -121,6 +121,21 @@ async function post(path: string, body: unknown): Promise<number> {
   return code;
 }
 
+async function state(): Promise<any> {
+  const fetch = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+  const token = JSON.parse(readFileSync(join(dir, 'runtime.json'), 'utf8')).token;
+  let code = 0;
+  let body = '';
+  try {
+    await handler({ url: '/jarvis/state', method: 'GET', socket: { remoteAddress: '127.0.0.1' },
+      headers: { authorization: `Bearer ${token}` } }, {
+      writeHead: (status: number) => { code = status; }, end: (text: string) => { body = text; },
+    });
+    assert.equal(code, 200);
+    return JSON.parse(body);
+  } finally { fetch.mock.restore(); }
+}
+
 function event(session: string, type: string, kind?: string): void {
   for (const listener of listeners.get('session/event') ?? []) {
     listener({ id: session }, { type, ...(kind ? { data: { reason: { kind } } } : {}) });
@@ -151,6 +166,23 @@ function delayedVerdict(): () => void {
 }
 
 describe('等价类', () => {
+  it('state实时显示open、judging、unsatisfied并优先显示缺少项', async () => {
+    const row = async () => (await state()).sessions.find((s: any) => s.id === 'a');
+    assert.equal('task' in await row(), false);
+    await post('input', { session: 'a', text: '用户原始需求' });
+    await tools.get('inject_to_session').execute({ session: 'a', message: '改写投递' });
+    assert.deepEqual((await row()).task, { status: 'open', summary: '用户原始需求' });
+    verdict = { verdict: 'unsatisfied', summary: '未完成', missing: '补回归测试' };
+    const release = delayedVerdict();
+    try {
+      event('a', 'turn/end', 'completed');
+      assert.deepEqual((await row()).task, { status: 'judging', summary: '用户原始需求' });
+      release();
+      await settled(() => tasks()[0]?.status === 'unsatisfied');
+      assert.deepEqual((await row()).task, { status: 'unsatisfied', summary: '补回归测试' });
+    } finally { release(); }
+  });
+
   it('并发完成按真实会话交给协调器，失败立即播报', async () => {
     const announcements: any[] = [];
     mock.method(OutputCoordinator.prototype, 'announce', async (...args: any[]) => { announcements.push(args); });
@@ -299,6 +331,17 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('state省略done与dropped任务并保留正常会话状态', async () => {
+    for (const session of ['a', 'b']) await tools.get('inject_to_session').execute({ session, message: '任务' });
+    event('a', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'done');
+    await tools.get('release_session').execute({ session: 'b' });
+    const rows = (await state()).sessions;
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((row: any) => !('task' in row)));
+    assert.equal(rows.find((row: any) => row.id === 'b').managed, false);
+  });
+
   it('达到续轮上限的提醒不合并成完成', async () => {
     await startPlugin({ maxContinueRounds: 0 });
     const announcements: any[] = [];
@@ -391,6 +434,18 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  it('state忽略刚过期任务并且不通过current隐式写台账', async () => {
+    let now = Date.now();
+    mock.method(Date, 'now', () => now);
+    await startPlugin();
+    await tools.get('inject_to_session').execute({ session: 'a', message: '原始任务' });
+    const before = readFileSync(join(dir, 'tasks.json'), 'utf8');
+    assert.equal((await state()).sessions.find((s: any) => s.id === 'a').task?.status, 'open');
+    now += 24 * 60 * 60_000 + 1;
+    assert.equal('task' in (await state()).sessions.find((s: any) => s.id === 'a'), false);
+    assert.equal(readFileSync(join(dir, 'tasks.json'), 'utf8'), before);
+  });
+
   it('排队期间任务被新任务替换，不向用户展示旧续做问题', async () => {
     let release!: (value: any) => void;
     context.get('userQuestions').ask = async (request: any) => {

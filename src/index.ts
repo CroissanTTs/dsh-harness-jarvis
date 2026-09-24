@@ -45,6 +45,7 @@ import { LiveState } from './live-state.ts';
 import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
+import { CompletionJudge } from './completion.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -140,6 +141,11 @@ export const Config = z.object({
   ttsBackend: z.union(['edge']).default('edge'),
   edgeVoice: z.string().default('zh-CN-YunjianNeural'),
   archiveIdleDays: z.number().default(7),
+  judgeEnabled: z.boolean().default(true),
+  judgeProvider: z.string().default(''),
+  judgeModel: z.string().default(''),
+  judgeTimeoutMs: z.number().default(20_000),
+  maxContinueRounds: z.number().default(2),
   // Jarvis agent creation (§9.1)
   provider: z.string().default('bailian'),
   model: z.string().default('qwen3.8-max-0902'),
@@ -161,6 +167,11 @@ interface JarvisConfig {
   ttsBackend: string;
   edgeVoice: string;
   archiveIdleDays: number;
+  judgeEnabled: boolean;
+  judgeProvider: string;
+  judgeModel: string;
+  judgeTimeoutMs: number;
+  maxContinueRounds: number;
   provider: string;
   model: string;
   jarvisSessionId: string;
@@ -188,6 +199,7 @@ const COMMANDER_PERSONA = [
   '- 你不堆 worker 的内容进自己记忆;worker 各自干净。你只干路由/口播/inject 决策/续轮判断。',
   '- 不能 inject_to_session 给自己。',
   '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
+  '- 收到以 [会话 … 判断未满足] 开头的通知时，按通知要求用 ask_user 询问并传入 session 和 task，不要自己决定续做。用户选继续才用 inject_to_session 发送具体续做指令；选不用了就结束。回答已失效时不要再发送旧续做指令。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
   '- 一两句话,别读代码/路径/markdown 出来。',
 ].join('\n');
@@ -200,6 +212,7 @@ interface JarvisDeps {
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
   ask: (question: string, choices: string[], exec?: { agent?: unknown; signal?: AbortSignal }) => Promise<string>;
+  askContinuation: (session: string, task: string, ask: () => Promise<string>) => Promise<string>;
 }
 
 interface SessionRow {
@@ -364,7 +377,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
 
   const setManaged = async (id: string, on: boolean): Promise<'ok' | 'not-found'> => {
     if (on && !listWorkerIds(ctx, entry).includes(id)) return 'not-found';
-    if (!on) ledger.dropSession(id);
+    if (!on) { ledger.dropSession(id); completion.invalidate(id); }
     if (on ? managed.add(id) : managed.remove(id)) live.touch();
     return 'ok';
   };
@@ -374,6 +387,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     ledger,
     sessionRows,
     setManaged,
+    askContinuation: (session, task, ask) => completion.askContinuation(session, task, ask),
     say: (text) => speakAsJarvis(builtInTts, entry, text),
     ask: async (question, choices, exec) => {
       const uq = (ctx as any).get?.('userQuestions') as { ask?: (r: unknown) => Promise<any> } | undefined;
@@ -406,6 +420,25 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   debug(entry, 'provided "jarvis" service (sessionId=' + entry.jarvisSessionId + ')');
   ctx.logger?.warn?.('dsh-harness-jarvis: provided "jarvis" service');
   let llm: unknown;
+  const completion = new CompletionJudge({
+    ledger,
+    managed: id => managed.has(id),
+    config: () => entry,
+    llm: () => llm,
+    messages: id => (ctx as any).get?.('agents')?.get?.(id)?.session?.deriveMessages?.() ?? [],
+    title: async id => (await sessionRows()).find(row => row.id === id)?.title || id,
+    say: text => deps.say(text),
+    notify: text => {
+      const agent = jarvisHandle?.agent ?? jarvisHandle;
+      const notice: UserMessage = {
+        id: MessageId(`jarvis-judge-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`),
+        role: 'user', content: [{ type: 'text', text }],
+        source: { kind: 'plugin', plugin: 'dsh-harness-jarvis', form: 'notice', summary: 'task needs continuation decision' },
+      };
+      if (!deliver(agent, notice)) throw new Error('completion: Jarvis accepts no messages');
+    },
+    onError: error => debug(entry, 'completion failed: ' + (error instanceof Error ? error.message : String(error))),
+  });
 
   // ── deferred services ─────────────────────────────────────────────────
   ctx.inject(['llm' as any], (llmCtx: Context) => {
@@ -626,12 +659,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             live.userSent();
             if (typeof agent?.followup === 'function') {
               agent.followup(msg);
-              if (session) ledger.expect(session, body.text);
+              if (session) { completion.invalidate(session); ledger.expect(session, body.text); }
               debug(entry, '/jarvis/input: followup() — "' + text.slice(0, 60) + '"' + (session ? ' → ' + session : ''));
               sendJson(res, 200, { ok: true });
             } else if (typeof agent?.inject === 'function') {
               agent.inject(msg);
-              if (session) ledger.expect(session, body.text);
+              if (session) { completion.invalidate(session); ledger.expect(session, body.text); }
               debug(entry, '/jarvis/input: inject() — "' + text.slice(0, 60) + '"');
               sendJson(res, 200, { ok: true });
             } else {
@@ -729,8 +762,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     }
     if (!sid || !managed.has(sid)) return;
     switch (event?.type) {
+      case 'turn/start':
+        completion.turnStarted(sid);
+        break;
       case 'turn/end':
-        // TODO §8/§10.2: disposition classifier + completion judge
+        void completion.turnEnded(sid, event.data?.reason?.kind).catch(error =>
+          debug(entry, 'turn/end judge failed: ' + (error instanceof Error ? error.message : String(error))));
         break;
       case 'approval/asked':
         // TODO §11: relay approval to user
@@ -739,12 +776,6 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         // TODO §8: intercept / escalate
         break;
     }
-  });
-
-  ctx.on('agent/turn-stopping' as any, (payload: { agent?: any; turn?: number }) => {
-    const sid = payload?.agent && String((payload.agent as any).id);
-    if (!sid || !managed.has(sid)) return;
-    // TODO §13/§8: judge continuation → steer
   });
 
   // ── approvals / questions relayed to the悬浮窗 (§11) ──────────────────
@@ -767,6 +798,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // so the orb's lifecycle stays tied to DSH ("和 DSH 作为依赖").
   return () => {
     clearInterval(pruneTasks);
+    completion.dispose();
     killPanel(entry);
   };
 }
@@ -1071,19 +1103,26 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
 
   tools.register(defineTool({
     name: 'ask_user',
-    description: '问用户一个问题并等待回答(悬浮窗和 DSH 窗口都会弹出)。有固定选项时给 choices。',
+    description: '问用户一个问题并等待回答(悬浮窗和 DSH 窗口都会弹出)。有固定选项时给 choices。续做通知必须同时传其中的 session 和 task，让不用了关闭正确任务。',
     parameters: {
       question: { type: 'string' as const, required: true },
       choices: { type: 'array' as const, items: { type: 'string' as const } },
+      session: { type: 'string' as const },
+      task: { type: 'string' as const },
     },
     output: textOutput,
     isConcurrencySafe: () => false,
-    async execute(args: { question: string; choices?: unknown }, exec: { agent?: unknown; signal?: AbortSignal } | undefined) {
+    async execute(args: { question: string; choices?: unknown; session?: string; task?: string }, exec: { agent?: unknown; signal?: AbortSignal } | undefined) {
       const question = String(args.question ?? '').trim();
       if (!question) throw new Error('ask_user: question must not be empty');
       const choices = Array.isArray(args.choices)
         ? args.choices.map((c) => String(c).trim()).filter((c) => c.length > 0) : [];
-      const answer = await deps.ask(question, choices, exec);
+      if ((args.session !== undefined || args.task !== undefined) && (!args.session?.trim() || !args.task?.trim())) {
+        throw new Error('ask_user: continuation needs both session and task');
+      }
+      const answer = args.session && args.task
+        ? await deps.askContinuation(args.session, args.task, () => deps.ask(question, ['继续', '不用了'], exec))
+        : await deps.ask(question, choices, exec);
       return text(answer ? `用户回答:${answer}` : '用户没有给出回答');
     },
   } as never));

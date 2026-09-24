@@ -86,19 +86,33 @@ describe('等价类', () => {
     assert.equal(tasks.open('b', '乙改写').request, '乙原话');
   });
 
-  it('每次新投递都会替代全部旧未完成任务，不复用未满足任务', () => {
+  it('新的用户原话替代全部旧未完成任务，包括未满足任务', () => {
     const rows = seed(4);
     for (const row of rows) row.session = 'a';
     rows[1].status = 'judging'; rows[2].status = 'unsatisfied'; rows[3].status = 'done';
     writeFileSync(file, JSON.stringify(rows));
     const tasks = ledger();
     assert.equal(tasks.current('a')?.id, rows[2].id);
+    tasks.expect('a', '新的用户需求');
     const first = tasks.open('a', '新任务');
     assert.deepEqual(saved().map(t => t.status), ['dropped', 'dropped', 'dropped', 'done', 'open']);
     const second = tasks.open('a', '更新任务');
     assert.notEqual(first.id, second.id);
     assert.equal(saved().filter(t => t.status === 'open').length, 1);
     assert.equal(tasks.current('a')?.id, second.id);
+  });
+
+  it('未满足任务的续做沿用原需求和 id，更新指令并递增轮数', () => {
+    const tasks = ledger();
+    tasks.expect('a', '原始需求');
+    const original = tasks.open('a', '第一轮');
+    const verdict = { verdict: 'unsatisfied' as const, summary: '少了测试', missing: '补测试', at: time };
+    tasks.setStatus(original.id, 'unsatisfied', verdict);
+    time += 100;
+    const continued = tasks.open('a', '补充测试');
+    assert.deepEqual(continued, { ...original, message: '补充测试', rounds: 1, lastVerdict: verdict });
+    assert.equal(saved().length, 1);
+    assert.deepEqual(ledger().current('a'), continued);
   });
 
   it('返回的任务与传入裁决不能从外部修改账本', () => {
@@ -116,6 +130,17 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('过期原话不会把续轮误当成新任务，过期任务不能续用', () => {
+    const tasks = ledger();
+    const first = tasks.open('a', '需求');
+    tasks.setStatus(first.id, 'unsatisfied');
+    tasks.expect('a', '已过期输入');
+    time += 10 * MINUTE;
+    assert.equal(tasks.open('a', '续做').id, first.id);
+    tasks.setStatus(first.id, 'unsatisfied');
+    time += DAY;
+    assert.notEqual(tasks.open('a', '新任务').id, first.id);
+  });
   it('原话在十分钟前一毫秒有效，恰好十分钟过期', () => {
     const tasks = ledger();
     tasks.expect('a', '有效'); tasks.expect('b', '到期');

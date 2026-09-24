@@ -54,6 +54,14 @@ export class TaskLedger {
     this.pruneMemory(now);
     const expected = this.expectations.get(session);
     this.expectations.delete(session);
+    const previous = [...this.tasks].reverse().find(task => task.session === session && unfinished(task));
+    // A new panel request replaces work; a prompted continuation preserves its original goal.
+    if (!expected && previous?.status === 'unsatisfied') {
+      previous.message = message;
+      previous.status = 'open';
+      this.bumpRound(previous.id);
+      return snapshot(previous);
+    }
     for (const task of this.tasks) {
       if (task.session === session && unfinished(task)) task.status = 'dropped';
     }

@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | J0 | 修复贾维斯会话标题设置（改用 `rename`） | — | 小 | 待办 |
 | J1 | 任务台账：记录"交给哪个会话做什么" | — | 小 | 已完成（`j1-task-ledger-20260924`） |
-| J2 | 完成判断 + 播报 + 续轮闭环（事件桥 turn/end） | J1 | 大 | 待办 |
+| J2 | 完成判断 + 播报 + 续轮闭环（事件桥 turn/end） | J1 | 大 | 已完成（`j2-completion-20260924`） |
 | J3 | 审批记录（带上下文写入长期记忆） | —（J1 可选增强） | 中 | 待办 |
 | J4 | 输出协调（播报合并、同一时间只问一个问题） | J2 | 中 | 待办 |
 | J5 | voice-mini 让出托管会话的轮末播报 | J2 | 小 | 待办 |
@@ -186,7 +186,9 @@
   - `tests/judge.test.ts`：`finalReply`（多条 assistant 合并、跳过工具块、去代码块、截断边界 3000、没有 assistant 返回空）；`parseVerdict`（纯 JSON、围栏包裹、前后有废话、verdict 非法、summary 超长截断、非 JSON、空串）。
   - `tests/llm.test.ts`：用假 `llm` 对象测 `oneShot`：正常拼接 text-delta；不支持 reasoningEffort 时自动重试一次；超时返回 null；stream 抛错返回 null；无 text 返回 null。
   - 把"收到 turn/end 后该做什么"抽成纯函数 `planTurnEnd({managed, task, reasonKind, verdict, rounds, max})` → 动作枚举，按三段式覆盖所有分支（含过期判断丢弃、达上限）。
-- **实现记录**：（空）
+- **实现记录**（Codex J2 / 2026-09-24）：新增 `src/llm.ts`（共享总超时、取消、reasoningEffort 单次降级重试）、`src/judge.ts`（回复提取、JSON 解析、纯动作判定）和 `src/completion.ts`（每会话轮次与任务身份校验的异步闭环）；`src/index.ts` 仅接入事件、五项配置、人设、播报与 UserMessage 通知，移除旧的 turn-stopping 空钩子，失败原因复用 `live-state.ts`。
+  - 补充决定：`tasks.ts` 对无新面板原话的 unsatisfied 任务复用 id/原始需求/创建时间、更新指令并递增 rounds；新的面板原话仍覆盖旧任务。`ask_user` 增加可选、成对的 session/task 参数（未满足通知明确要求携带），用户选“不用了”关闭相应任务，过期答复不继续转发；重启后仍可回答未发生新活动的持久化未满足任务。新轮次、新面板输入、移出托管和卸载会取消旧判断；标题缺失回退会话 id，通知投递失败恢复 open 并记日志，先结算任务再等待播报以防覆盖新任务。
+  - 验证：三段式测试覆盖 llm/judge/completion 和台账续轮，并扩展真实插件注册的工具/事件接线测试；`node --test tests/*.test.ts` 163/163、`cd macos && swift test` 208/208、`npm run build` 通过。临时副本移除事件桥后有 7 项接线测试失败，确认回归覆盖。未启动真实 DSH；重启后需人工验收声音及提问，J5 合入前的重复播报仍是已知现象。表格用 Git 标签 `j2-completion-20260924` 定位实现与状态更新的同一提交（`git rev-parse j2-completion-20260924` 可取提交号）。
 
 ### J3 审批记录
 

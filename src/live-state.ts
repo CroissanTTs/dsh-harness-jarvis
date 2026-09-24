@@ -80,7 +80,7 @@ type Held = HeldApproval | HeldAsk;
 interface LastTurn { at: number; failed: boolean; error?: string }
 
 /** Turn-end kinds that count as a failure (the rest are success or user-initiated stops). */
-const FAILED_KINDS: Record<string, string> = {
+export const FAILED_KINDS: Readonly<Record<string, string>> = {
   error: '模型调用失败',
   blocked: '被拦截',
   'max-tokens': '输出超长被截断',

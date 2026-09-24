@@ -10,15 +10,15 @@ describe('等价类', () => {
     const merged = mergeSettings(defaults, { provider: ' custom ', model: ' test ', edgeVoice: ' voice ', greetings,
       judgeEnabled: false, judgeProvider: ' other ', judgeModel: ' judge ', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
     assert.deepEqual(merged, { provider: 'custom', model: 'test', edgeVoice: 'voice', greetings: ['你好。', '欢迎。'],
-      judgeEnabled: false, judgeProvider: 'other', judgeModel: 'judge', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
+      judgeEnabled: false, askInterception: false, judgeProvider: 'other', judgeModel: 'judge', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
     assert.notEqual(merged.greetings, greetings);
     assert.equal(defaults.judgeEnabled, true);
   });
   it('partial source falls back to composition, unknown/internal keys are excluded', () => {
     const base = { ...defaults, provider: 'my-provider', maxContinueRounds: 3 };
-    const value = mergeSettings(base, { judgeModel: 'x', runtimeFile: '/wrong', askInterception: true });
+    const value = mergeSettings(base, { judgeModel: 'x', runtimeFile: '/wrong', unknownField: true });
     assert.equal(value.provider, 'my-provider'); assert.equal(value.maxContinueRounds, 3);
-    assert.ok(!('runtimeFile' in value)); assert.ok(!('askInterception' in value));
+    assert.ok(!('runtimeFile' in value)); assert.ok(!('unknownField' in value));
   });
   it('empty judge overrides follow the main model and empty greetings clear additions', () => {
     const value = mergeSettings({ ...defaults, judgeProvider: 'x', judgeModel: 'y', greetings: ['z'] },

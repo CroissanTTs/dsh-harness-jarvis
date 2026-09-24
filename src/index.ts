@@ -8,7 +8,7 @@
  * user's answer after turn/end, then Jarvis delivers a new UserMessage.
  *
  * Explicit memory tools and filtered temp capture use scoped stores; optional
- * DSH settings update runtime preferences. Automatic question answering remains backlog work.
+ * DSH settings update runtime preferences, including opt-in low-risk question answering.
  * Pure logic lives in sibling modules so it can be tested without DSH.
  *
  * @module dsh-harness-jarvis
@@ -36,6 +36,7 @@ import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals
 import { MemoryStore } from './memory/store.ts';
 import { MemorySection } from './memory/section.ts';
 import { mergeSettings, SETTINGS_LIMITS } from './settings.ts';
+import { AskInterceptor } from './ask-intercept.ts';
 import { captureTemp, type CaptureSession } from './memory/capture.ts';
 import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
@@ -144,6 +145,7 @@ export const Config = z.object({
   edgeVoice: z.string().default('zh-CN-YunjianNeural'),
   archiveIdleDays: z.number().default(7),
   judgeEnabled: z.boolean().default(true),
+  askInterception: z.boolean().default(false),
   judgeProvider: z.string().default(''),
   judgeModel: z.string().default(''),
   judgeTimeoutMs: z.number().default(20_000),
@@ -164,6 +166,7 @@ export const SettingsSchema = z.object({
   model: Config.dict!.model.description('贾维斯模型；重启 DSH 生效。'),
   edgeVoice: Config.dict!.edgeVoice.description('内置语音音色（voice-mini 不可用时）；下一次播报生效。'),
   greetings: Config.dict!.greetings.description('附加欢迎语；重启欢迎时随机选用。'),
+  askInterception: Config.dict!.askInterception.description('允许贾维斯代答托管会话的低风险选择题；默认关闭，不确定时仍交给你。'),
   judgeEnabled: Config.dict!.judgeEnabled.description('启用任务完成判断；下一次判断生效。'),
   judgeProvider: Config.dict!.judgeProvider.description('判断模型提供方；留空使用当前贾维斯提供方。'),
   judgeModel: Config.dict!.judgeModel.description('判断模型；留空使用当前贾维斯模型。'),
@@ -187,6 +190,7 @@ interface JarvisConfig {
   edgeVoice: string;
   archiveIdleDays: number;
   judgeEnabled: boolean;
+  askInterception: boolean;
   judgeProvider: string;
   judgeModel: string;
   judgeTimeoutMs: number;
@@ -950,8 +954,33 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       return outcome;
     });
   }, { prepend: true } as any);
+  const askInterceptor = new AskInterceptor({
+    config: () => entry,
+    managed: id => id !== entry.jarvisSessionId && managed.has(id),
+    task: id => ledger.peekCurrent(id),
+    llm: () => llm,
+    recall: (session, query) => recall(memory, { session, query, limit: 5 }),
+    accepted: answer => {
+      // Return to DSH before any reporting or disk work; neither can reopen the question.
+      setImmediate(() => {
+        if (settingsDisposed) return;
+        const onError = (error: unknown) => debug(entry, 'auto answer report failed: ' + String(error));
+        void memory.appendTemp(answer.session, {
+          at: Date.now(), type: 'question/auto-answer', questionId: answer.question.id,
+          question: Array.from(answer.question.question).slice(0, 500).join(''),
+          choice: Array.from(answer.choice).slice(0, 500).join(''), confidence: answer.confidence,
+          ...(answer.task ? { taskId: answer.task.id } : {}),
+        }).catch(onError);
+        void (async () => {
+          const title = (await sessionRows()).find(row => row.id === answer.session)?.title || answer.session;
+          await deps.say(`${title}问了${answer.question.question}，我替你选了${answer.choice}`);
+        })().catch(onError);
+      });
+    },
+  });
   ctx.on('user-questions/request' as any, (req: any, next: () => Promise<any>) =>
-    live.holdAsk(req, next), { prepend: true } as any);
+    askInterceptor.answer(req, () => settingsDisposed || req.signal?.aborted ? next() : live.holdAsk(req, next)),
+    { prepend: true } as any);
 
   // ── built-in TTS + voice:tts detect (§5) ─────────────────────────────
   const builtInTts = makeBuiltInTTS(() => entry.edgeVoice);
@@ -969,6 +998,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     clearInterval(pruneTasks);
     clearTimeout(pruneAudio);
     completion.dispose();
+    askInterceptor.dispose();
     output.dispose();
     panel.dispose();
     if (panelOwner === panel) panelOwner = null;

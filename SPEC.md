@@ -1,7 +1,7 @@
 # dsh-harness-jarvis — 设计 Spec
 
 > 状态：H1 全局快捷键输入实现同步 · 2026-09-24
-> 已落地：J0/J1/J2/J3/J4/J5/J6/U1/U2/H1/M1/M2/M3/M6；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取、人设记忆注入和审批记录已落地；播报字幕、全局快捷键输入和 DSH 设置页已接通，自动答疑和语音输入尚未实现。
+> 已落地：J0/J1/J2/J3/J4/J5/J6/J7/U1/U2/H1/M1/M2/M3/M6；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取、人设记忆注入和审批记录已落地；播报字幕、全局快捷键输入和 DSH 设置页已接通，可选低风险代答已接通且默认关闭，语音输入尚未实现。
 > 单一真相源。MVP 砍 STT(悬浮窗文本输入窗口替代);权限面彻底干净(无 danger-full-access)。多对话核心:瘦编排+干净 worker+虚拟交错显示(§3.2);悬浮窗 dsh-notch 基(§12)。待研究:次要(见 §18)。
 
 ---
@@ -142,7 +142,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 默认 `judgeEnabled=true`、`judgeTimeoutMs=20000`、`maxContinueRounds=2`；模型默认沿用 Jarvis 的 provider/model，可单独配置 judgeProvider/judgeModel。优先请求 `reasoningEffort:'low'`，不支持时去掉后重试。
 
-DSH 设置页 `jarvis` 暴露 provider、model、edgeVoice、greetings 与全部五个 judge 字段。judge 字段下一次判断生效；超时为 1000–120000 毫秒整数，续轮上限为 0–10 整数。provider/model 在创建或恢复 agent 前读取已保存配置，之后需要重启 DSH；judge 留空时沿用该运行中 agent 的模型选择。edgeVoice 仅控制 voice-mini 不可用时的内置音色，下一次播报生效，音频缓存按音色和文本区分；greetings 是重启欢迎语的附加列表。服务缺失时使用插件配置，服务卸载后即时字段回退插件配置。内部路径及会话身份不暴露在页面，J7 的 askInterception 尚未加入。
+DSH 设置页 `jarvis` 暴露 provider、model、edgeVoice、greetings 与全部五个 judge 字段。judge 字段下一次判断生效；超时为 1000–120000 毫秒整数，续轮上限为 0–10 整数。provider/model 在创建或恢复 agent 前读取已保存配置，之后需要重启 DSH；judge 留空时沿用该运行中 agent 的模型选择。edgeVoice 仅控制 voice-mini 不可用时的内置音色，下一次播报生效，音频缓存按音色和文本区分；greetings 是重启欢迎语的附加列表。服务缺失时使用插件配置，服务卸载后即时字段回退插件配置。内部路径及会话身份不暴露在页面，askInterception 默认关闭，控制 §8.3 的低风险代答。
 
 续轮顺序固定为 **轮次结束 → 判断 → ask_user → 用户决定 → 投递新 UserMessage**。`session/event` 监听器不等待判断或用户回答；不使用 `agent/turn-stopping`，不向会话日志写自定义事件。
 
@@ -154,7 +154,11 @@ DSH 设置页 `jarvis` 暴露 provider、model、edgeVoice、greetings 与全部
 
 ### 8.3 审批与提问转发
 
-`approval/request` / `user-questions/request` 分别经 `live.holdApproval` / `live.holdAsk` 与 DSH 窗口竞答，先答者生效。审批先把决定返回 DSH，再异步记录（§10.1、§11）；普通提问只转发。低风险自动答疑尚未实现，见 backlog J7。
+`approval/request` / `user-questions/request` 分别经 `live.holdApproval` / `live.holdAsk` 与 DSH 窗口竞答，先答者生效。审批先把决定返回 DSH，再异步记录（§10.1、§11）；提问默认只转发。开启 askInterception 后，仅当前托管 worker 的有选项问题可尝试代答，贾维斯自身与明确审批/review intent 始终转发。输入包含原问题、选项、当前任务原始需求，以及 general 和该会话的 recall 结果；提示要求只答已有依据的低风险实现细节，高风险决定或不确定时返回 null。
+
+输出必须是严格 JSON，choice 与选项原文完全相等，confidence 为 0.85–1 的数字。最多四题、原问题结构和每次完整模型输入均不超过 16000 字符，超长直接转发，不截断任务或记忆；任一题不合格、开放题、读记忆或模型失败、超时，都将完整原请求交给原转发链。复用 judgeProvider/judgeModel（留空沿用当前 Jarvis 模型）及 judgeTimeoutMs，整个请求的检索与判断共享总时限。返回前复查开关、托管状态、任务、问题和取消信号，拒绝过期结果；卸载取消在途推理。
+
+成功时按宿主 answers/id/selected 格式返回，然后异步口播“会话名问了问题，我替你选了选项”，在对应会话的 temp 写 question/auto-answer（问题与选项各最多 500 码点、置信度、问题/任务 id），不记模型推理或检索原文，不写 DSH 自定义事件。播报和记录失败只记日志，不改变已返回答案。
 
 ## 9. Jarvis agent 来源 + 托管集
 
@@ -347,7 +351,8 @@ ctx.jobs.start({ kind: 'jarvis-...', label, owner?: Agent, run: () => ({cancel, 
 
 // 当前审批/提问接线（prepend，与 DSH 默认处理器竞答）
 ctx.on('approval/request', (req, next) => live.holdApproval(req, next, command), { prepend: true });
-ctx.on('user-questions/request', (req, next) => live.holdAsk(req, next), { prepend: true });
+ctx.on('user-questions/request', (req, next) => askInterceptor.answer(req,
+  () => disposed || req.signal?.aborted ? next() : live.holdAsk(req, next)), { prepend: true });
 // 实际审批 handler 还在 outcome 返回后异步记录，见 §10.1。
 
 // J2 续轮使用 session/event 的 turn/end（reason.kind），不使用 agent/turn-stopping。
@@ -394,7 +399,7 @@ ctx.on('user-questions/request', (req, next) => live.holdAsk(req, next), { prepe
 
 **当前已落地**：插件创建/恢复与标题固定、托管集合、任务台账、轮末判断与用户批准续做、完成播报合并和提问排队、审批竞答与异步 HTML 记录、voice-mini 轮末让出、原生面板及任务进度。
 
-**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；自动答疑 J7；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
+**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
 
 ## 17. 平台移植性(为什么先只做 DSH)
 

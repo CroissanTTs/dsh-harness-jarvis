@@ -49,7 +49,7 @@ const task = () => JSON.parse(readFileSync(join(dir, 'tasks.json'), 'utf8')).at(
 describe('等价类', () => {
   it('installs only supported editable fields in jarvis with restart descriptions', () => {
     start(); assert.equal(installed.ns, 'jarvis'); assert.equal(installed.owner, ctx);
-    assert.deepEqual(Object.keys(installed.schema.dict).sort(), ['provider','model','edgeVoice','greetings','judgeEnabled','judgeProvider','judgeModel','judgeTimeoutMs','maxContinueRounds'].sort());
+    assert.deepEqual(Object.keys(installed.schema.dict).sort(), ['provider','model','edgeVoice','greetings','askInterception','judgeEnabled','judgeProvider','judgeModel','judgeTimeoutMs','maxContinueRounds'].sort());
     assert.match(installed.schema.dict.provider.meta.description, /重启 DSH/);
     assert.match(installed.schema.dict.model.meta.description, /重启 DSH/);
     assert.ok(!('runtimeFile' in installed.base));

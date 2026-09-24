@@ -49,7 +49,7 @@ final class AppController: NSObject {
     overlay = OverlayPanel(root: OverlayRootView(
       state: overlayState, model: model,
       onHistory: { [weak self] in self?.openHistory() },
-      onClose: { [weak self] in self?.model.closeQuickBar() }))
+      onEscape: { [weak self] in self?.model.escapePressed() }))
     if demo != nil { Log.write("demo mode") }
   }
 

@@ -7,7 +7,7 @@ struct OverlayRootView: View {
   @ObservedObject var state: OverlayState
   @ObservedObject var model: PanelModel
   var onHistory: () -> Void
-  var onClose: () -> Void
+  var onEscape: () -> Void
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -50,9 +50,9 @@ struct OverlayRootView: View {
         more
         ForEach(cards) { PendingCardView(item: $0, model: model) }
         if state.showTargets { targets }
-        QuickBarView(model: model, state: state, growsUp: true, onClose: onClose)
+        QuickBarView(model: model, state: state, growsUp: true, onEscape: onEscape)
       } else {
-        QuickBarView(model: model, state: state, growsUp: false, onClose: onClose)
+        QuickBarView(model: model, state: state, growsUp: false, onEscape: onEscape)
         if state.showTargets { targets }
         ForEach(cards) { PendingCardView(item: $0, model: model) }
         more

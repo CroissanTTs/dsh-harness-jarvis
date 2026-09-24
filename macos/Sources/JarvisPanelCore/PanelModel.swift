@@ -86,6 +86,9 @@ public final class PanelModel: ObservableObject {
     }
   }
   @Published public private(set) var quickBarOpen = false
+  @Published public private(set) var escapeHint = false
+  private var escapeGate = EscapeGate()
+  private var escapeHintTask: Task<Void, Never>?
   @Published public private(set) var historyExpanded = false
   /// The pointer is over the orb: it shows standby, as when the quick bar is open.
   @Published public private(set) var hovering = false
@@ -268,6 +271,7 @@ public final class PanelModel: ObservableObject {
     }
     historyExpanded = store.settings.historyExpanded
     sendError = nil
+    clearEscapeHint()
     quickBarOpen = true
     if historyExpanded { Task { await loadMessages() } }
   }
@@ -276,6 +280,32 @@ public final class PanelModel: ObservableObject {
     quickBarOpen = false
     answeringID = nil
     sendError = nil
+    clearEscapeHint()
+  }
+
+  /// The first Esc only shows a hint; a second within `EscapeGate.window` closes.
+  /// The draft survives either way.
+  public func escapePressed(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    guard quickBarOpen else { return }
+    switch escapeGate.press(at: time) {
+    case .close:
+      closeQuickBar()
+    case .hint:
+      escapeHint = true
+      escapeHintTask?.cancel()
+      escapeHintTask = Task { [weak self] in
+        try? await Task.sleep(for: .seconds(EscapeGate.window))
+        guard !Task.isCancelled else { return }
+        self?.escapeHint = false
+      }
+    }
+  }
+
+  private func clearEscapeHint() {
+    escapeGate.reset()
+    escapeHintTask?.cancel()
+    escapeHintTask = nil
+    if escapeHint { escapeHint = false }
   }
 
   private func restoredTarget() -> Target {

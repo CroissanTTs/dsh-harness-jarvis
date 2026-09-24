@@ -9,7 +9,7 @@ struct QuickBarView: View {
   @ObservedObject var model: PanelModel
   @ObservedObject var state: OverlayState
   var growsUp: Bool
-  var onClose: () -> Void
+  var onEscape: () -> Void
 
   @State private var inputHeight = InputField.lineHeight + 4
   @State private var sending = false
@@ -20,7 +20,7 @@ struct QuickBarView: View {
         targetChip
         InputField(text: $model.draft, height: $inputHeight, placeholder: placeholder,
                    focusToken: state.focusToken, onSubmit: send, onTab: { model.cycleTarget() },
-                   onEscape: onClose)
+                   onEscape: onEscape)
           .frame(height: inputHeight)
         iconButton(historyIcon, help: model.historyExpanded ? "收起对话" : "展开对话") {
           Task { await model.setHistoryExpanded(!model.historyExpanded) }
@@ -34,7 +34,15 @@ struct QuickBarView: View {
           .lineLimit(2)
           .padding(.leading, 2)
       }
+      if model.escapeHint {
+        Text("再按一次 Esc 收起")
+          .font(.system(size: 11))
+          .foregroundStyle(Theme.dim)
+          .padding(.leading, 2)
+          .transition(.opacity)
+      }
     }
+    .animation(.easeOut(duration: 0.12), value: model.escapeHint)
     .padding(.horizontal, 10)
     .padding(.vertical, 9)
     .frame(width: Self.width, alignment: .leading)

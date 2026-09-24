@@ -102,7 +102,9 @@ struct InputField: NSViewRepresentable {
         parent.onTab()
         return true
       case #selector(NSResponder.cancelOperation(_:)):
-        parent.onEscape()
+        // Holding Esc must not count as the second press.
+        let event = NSApp.currentEvent
+        if !(event?.type == .keyDown && event?.isARepeat == true) { parent.onEscape() }
         return true
       default:
         return false

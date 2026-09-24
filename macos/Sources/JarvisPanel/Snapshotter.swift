@@ -16,6 +16,7 @@ final class Snapshotter {
     var quick = false
     var history = false
     var targets = false
+    var escape = false
   }
 
   private let controller: AppController
@@ -55,6 +56,7 @@ final class Snapshotter {
       Scene(name: "18-targets-task-state", demo: 7, origin: lower, quick: true, targets: true),
       Scene(name: "19-approval-presets", demo: 8, origin: upper, quick: true),
       Scene(name: "20-auto-approvals", demo: 9, origin: upper, hover: true),
+      Scene(name: "21-escape-hint", demo: 0, origin: lower, quick: true, escape: true),
     ]
     let (orb, _, model) = controller.snapshotParts
     for scene in scenes {
@@ -74,6 +76,11 @@ final class Snapshotter {
         }
       }
       try? await Task.sleep(for: .milliseconds(800))
+      if scene.escape {
+        model.draft = "写了一半的话"
+        model.escapePressed()
+        try? await Task.sleep(for: .milliseconds(250))
+      }
       orb.orbView.advance(seconds: 2.5)
       write(scene.name)
     }

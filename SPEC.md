@@ -96,7 +96,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 - 当前 `voice:tts` 注入只记录服务发现日志，不是实际播放切换接口。
 - 插件用 `ctx.provide('jarvis')` 暴露 `speech`（同步面板口播状态）和 `claimsTurnEnd(sessionId)`。后者仅在**已托管 + 台账有未结任务 + judgeEnabled** 时返回 true。
 - voice-mini 在处理 `turn/end` 时查询可选的 `claimsTurnEnd`；明确返回 true 才跳过该会话的轮末总结及兜底播报。提示音、工具播报、运行状态等保持原行为；服务缺失或查询抛错沿用旧行为。
-- 已知配置边界：`judgeEnabled=false` 时 voice-mini 不让出；J2 仍会按 `unclear` 模板播报，因此此配置下可能重复播报。本次清理不改变这条既有行为。
+- `judgeEnabled=false` 时 voice-mini 不让出，贾维斯静默更新台账：完成标 done、中止标 dropped、失败保持 open；未装 voice-mini 时轮末无播报，面板未读标记仍照常出现。
 
 ## 6. 输入:MVP 用悬浮窗文本输入窗口(STT 后续)
 
@@ -133,11 +133,12 @@ DSH / Cordis 加载插件 → apply()（全局）
 | `turn/start` | 使旧判断和旧续做问题失效，取消进行中的模型请求 |
 | `turn/end: completed` | `open → judging`；读取台账原话、投递消息及最后一条 user 之后的助手文本，剔除代码块、截取最多 3000 字，独立模型判断 |
 | `satisfied` | 任务 done，交给输出协调器播报摘要（最多 40 字） |
-| `unclear` | 任务 done，播“会话名做完了”；模型不可用、超时、格式错误、缺少回复或关闭判断均采用此回退 |
+| `unclear` | 任务 done，播“会话名做完了”；判断开启时模型不可用、超时、格式错误或缺少回复采用此回退 |
 | `unsatisfied` 且未达上限 | 任务 unsatisfied，向 Jarvis 投递含缺少项（最多 60 字）、session、task 的 UserMessage；Jarvis 用 `ask_user` 征求续做，再按答案投递具体新消息或结束任务 |
 | 未满足且达到续轮上限 | 任务 done，立即播报“还没做完…已经续了 X 次…交给你看看”，不合并成成功提示 |
 | `aborted` | dropped，不播报 |
-| `error / blocked / max-tokens / interrupted` | 保持 open，立即播报失败原因，不调用判断模型 |
+| `error / blocked / max-tokens / interrupted` | 保持 open；判断开启时立即播报失败原因，不调用判断模型 |
+| `judgeEnabled=false` | 只更新台账，不调用判断模型或播报；运行中关闭后，迟到的标题/判断结果也按静默策略处理 |
 | 移出托管 / 新轮次 / 新任务 / 插件卸载 | 旧判断和续做答案失效，迟到结果不得覆盖新任务 |
 
 默认 `judgeEnabled=true`、`judgeTimeoutMs=20000`、`maxContinueRounds=2`；模型默认沿用 Jarvis 的 provider/model，可单独配置 judgeProvider/judgeModel。优先请求 `reasoningEffort:'low'`，不支持时去掉后重试。

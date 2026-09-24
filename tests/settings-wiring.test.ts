@@ -60,7 +60,8 @@ describe('等价类', () => {
     await turn(); assert.equal(calls[0].provider, 'judge'); assert.equal(calls[0].model, 'judge-model');
     assert.equal(task().status, 'done'); assert.match(announcements[0], /已经续了 0 次/);
     values = { judgeEnabled: false }; hooks.onChange(); await turn(); assert.equal(calls.length, 1);
-    assert.equal(task().lastVerdict.verdict, 'unclear');
+    assert.equal(task().status, 'done'); assert.equal(task().lastVerdict, undefined);
+    assert.equal(announcements.length, 1);
   });
   it('updates built-in voice on the next utterance and never reuses another voice cache', async () => {
     const synth: string[][] = [];
@@ -88,6 +89,20 @@ describe('等价类', () => {
   });
 });
 describe('边界值', () => {
+  it('settings watch 关闭后完成和失败都沉默，重新开启立即恢复判断播报', async () => {
+    start();
+    values = { judgeEnabled: false }; hooks.onChange();
+    await turn(); assert.equal(task().status, 'done');
+    assert.equal(services.jarvis.claimsTurnEnd('worker'), false);
+    await tools.get('inject_to_session').execute({session:'worker', message:'新任务'});
+    for (const cb of listeners.get('session/event') ?? []) cb({id:'worker'}, {type:'turn/end',data:{reason:{kind:'error'}}});
+    await flush(); assert.equal(task().status, 'open');
+    assert.deepEqual(calls, []); assert.deepEqual(announcements, []);
+    values = { judgeEnabled: true, maxContinueRounds: 0 }; hooks.onChange();
+    assert.equal(services.jarvis.claimsTurnEnd('worker'), true);
+    await turn(); assert.equal(calls.length, 1); assert.equal(announcements.length, 1);
+    assert.equal(task().status, 'done');
+  });
   it('late settings service changes judge but does not recreate or switch running agent', async () => {
     const service = services.settings; delete services.settings; start(); services.settings = service;
     values = { provider: 'later', model: 'later-model', judgeModel: 'later-judge', maxContinueRounds: 0 }; deferredSettings(ctx);

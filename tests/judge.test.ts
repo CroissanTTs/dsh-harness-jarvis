@@ -9,6 +9,15 @@ const unsatisfied: Verdict = { verdict: 'unsatisfied', summary: '还没完成', 
 const task = (status: 'open' | 'judging' | 'unsatisfied' | 'done' | 'dropped' = 'open', rounds = 0) => ({ status, rounds });
 
 describe('等价类', () => {
+  for (const [reasonKind, expected] of [
+    ['completed', 'done-silent'], ['aborted', 'drop'], ['error', 'open-silent'],
+    ['blocked', 'open-silent'], ['max-tokens', 'open-silent'], ['interrupted', 'open-silent'],
+    ['unknown', 'ignore'], ['', 'ignore'], [undefined, 'ignore'],
+  ] as const) it(`关闭判断时 ${String(reasonKind)} 只规划台账动作`, () => {
+    for (const status of ['open', 'judging', 'unsatisfied'] as const) {
+      assert.equal(planTurnEnd({ managed: true, task: task(status), reasonKind, max: 2, judgeEnabled: false }), expected);
+    }
+  });
   it('只保留最后一条用户消息后的助手文字', () => {
     assert.equal(finalReply([
       text('assistant', '旧回复'), text('user', '旧请求'), text('assistant', '旧结果'),
@@ -121,6 +130,12 @@ describe('异常路径', () => {
     }
   });
 
+  it('关闭判断仍忽略未托管、缺失任务、终态和过期模型回调', () => {
+    const args = { managed: true, task: task(), reasonKind: 'completed', max: 2, judgeEnabled: false };
+    for (const patch of [{managed:false}, {task:undefined}, {task:task('done')}, {task:task('dropped')}, {stale:true}]) {
+      assert.equal(planTurnEnd({...args, ...patch, verdict:satisfied}), 'ignore');
+    }
+  });
   it('未知结束原因和不再评审中的回调不会产生动作', () => {
     for (const reasonKind of [undefined, '', 'unknown']) {
       assert.equal(planTurnEnd({ managed: true, task: task(), reasonKind, max: 2 }), 'ignore');

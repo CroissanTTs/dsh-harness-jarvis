@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskLedger } from '../src/tasks.ts';
@@ -54,6 +54,20 @@ beforeEach(() => {
 afterEach(() => { judge.dispose(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('等价类', () => {
+  for (const [reason, status] of [['completed','done'], ['aborted','dropped'], ['error','open'],
+    ['blocked','open'], ['max-tokens','open'], ['interrupted','open']] as const) {
+    it(`判断关闭时 ${reason} 静默更新为 ${status}，不调用模型或查标题`, async () => {
+      config.judgeEnabled = false;
+      let titleCalls = 0;
+      getTitle = () => { titleCalls++; return 'hammer'; };
+      ledger.open('a', '需求');
+      await judge.turnEnded('a', reason);
+      assert.equal(titleCalls, 0);
+      assert.equal(saved()[0].status, status);
+      assert.equal(saved()[0].lastVerdict, undefined);
+      assert.deepEqual(spoken, []); assert.deepEqual(notices, []); assert.deepEqual(calls, []); assert.deepEqual(errors, []);
+    });
+  }
   it('满足后保存裁决并直接播报，不唤醒贾维斯', async () => {
     ledger.open('a', '需求');
     await judge.turnEnded('a', 'completed');
@@ -106,6 +120,23 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('模型运行期间关判断，迟到的未满足结果静默结束且不提问', async () => {
+    const response = deferred<void>();
+    llm = { async *stream() { await response.promise; yield {type:'text-delta', text:JSON.stringify({verdict:'unsatisfied',summary:'还没好',missing:'测试'})}; yield {type:'finish',reason:{kind:'stop'}}; } };
+    ledger.open('a', '需求');
+    const pending = judge.turnEnded('a', 'completed');
+    await new Promise(resolve => setImmediate(resolve));
+    config.judgeEnabled = false; response.resolve(); await pending;
+    assert.equal(saved()[0].status, 'done'); assert.equal(saved()[0].lastVerdict, undefined);
+    assert.deepEqual(spoken, []); assert.deepEqual(notices, []);
+  });
+  for (const reason of ['completed', 'error']) it(`等标题期间关判断，${reason} 也不播报或调用模型`, async () => {
+    const title = deferred<string>(); getTitle = () => title.promise;
+    ledger.open('a', '需求'); const pending = judge.turnEnded('a', reason);
+    config.judgeEnabled = false; title.resolve('hammer'); await pending;
+    assert.equal(saved()[0].status, reason === 'completed' ? 'done' : 'open');
+    assert.deepEqual(spoken, []); assert.deepEqual(calls, []); assert.deepEqual(notices, []);
+  });
   it('达到续轮上限后播报缺项并结束，max=0 也不提问', async () => {
     llm = stream('unsatisfied');
     const task = ledger.open('a', '需求');
@@ -120,16 +151,16 @@ describe('边界值', () => {
     assert.match(spoken[1], /已经续了 0 次/);
   });
 
-  it('开关关闭、空回复、缺少模型均走完成模板', async () => {
-    for (const condition of ['disabled', 'empty', 'no-llm']) {
+  it('判断开启但空回复或缺少模型仍走完成模板', async () => {
+    for (const condition of ['empty', 'no-llm']) {
       ledger.open('a', '需求');
-      config.judgeEnabled = condition !== 'disabled';
+      config.judgeEnabled = true;
       messages = condition === 'empty' ? [] : [{ role: 'assistant', content: [{ type: 'text', text: '结果' }] }];
       llm = condition === 'no-llm' ? undefined : stream();
       await judge.turnEnded('a', 'completed');
       assert.equal(saved().at(-1).lastVerdict.verdict, 'unclear');
     }
-    assert.deepEqual(spoken, Array(3).fill('hammer做完了'));
+    assert.deepEqual(spoken, Array(2).fill('hammer做完了'));
     assert.equal(calls.length, 0);
   });
 
@@ -166,6 +197,21 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  for (const reason of ['completed','aborted','error','blocked','max-tokens','interrupted']) {
+    it(`判断关闭时 ${reason} 台账落盘失败仍完成内存更新且不播报`, async () => {
+      judge.dispose();
+      const blocked = join(dir, 'blocked'); writeFileSync(blocked, 'keep');
+      ledger = new TaskLedger(join(blocked, 'tasks.json'), error => errors.push(error));
+      config.judgeEnabled = false; judge = createJudge();
+      ledger.open('a', '需求'); errors.length = 0;
+      await assert.doesNotReject(judge.turnEnded('a', reason));
+      assert.ok(errors.length > 0);
+      assert.equal(ledger.current('a')?.status, ['completed','aborted'].includes(reason) ? undefined : 'open');
+      assert.equal(readFileSync(blocked, 'utf8'), 'keep');
+      assert.deepEqual(spoken, []); assert.deepEqual(notices, []); assert.deepEqual(calls, []);
+    });
+  }
+
   it('未托管、无任务、未知原因都不判断或播报，aborted 静默丢弃', async () => {
     ledger.open('outside', '需求');
     await judge.turnEnded('outside', 'completed');

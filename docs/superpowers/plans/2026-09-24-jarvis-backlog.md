@@ -35,7 +35,7 @@
 | J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 已完成（`j3-approval-records-20260924`） |
 | U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 已完成（`u2-task-state-20260924`） |
 | J8 | 清理：过期注释、残留字段、SPEC 同步（放在本阶段最后） | — | 小 | 已完成（`j8-cleanup-20260924`） |
-| J5a | 关闭完成判断时的重复播报（J5 实现记录留下的边界） | J5 | 小 | 待办 |
+| J5a | 关闭完成判断时的重复播报（J5 实现记录留下的边界） | J5 | 小 | 已完成（`j5a-judge-off-silence-20260924`） |
 
 ### 阶段 3：稳定性
 
@@ -319,7 +319,9 @@
   3. 未安装 voice-mini 且判断关闭时，托管任务的轮末不会有任何播报。这是可接受的：用户主动关了判断，面板未读标记照常出现。在 README 的配置说明里补一句。
 - **位置**：优先在 `src/judge.ts` 的 `planTurnEnd` 里加一个 `judgeEnabled` 输入，由它产出"只更新台账、不播报"的动作，避免在 `index.ts` 里分支。
 - **测试**：`planTurnEnd` 在判断关闭时对每种 `reasonKind` 的动作（等价类）；判断开关在运行中通过设置页切换后立即生效（边界，J6 的 watch）；台账写失败不影响（异常）。
-- **实现记录**：（空）
+- **实现记录**（Codex J5a / 2026-09-24）：`src/judge.ts` 的 planTurnEnd 接收 judgeEnabled，关闭时返回静默台账动作；CompletionJudge 直接完成 done / dropped / open 更新并撤销旧判断与续做问题，不取标题、不调模型、不播报。等待标题或模型时切换关闭也会重新应用同一策略，迟到结果不会播报或发起续做；未管理、终态、未知原因和过期事件仍忽略。保留判断开启时的模型及失败/unclear 回退行为，不改 index.ts、claimsTurnEnd 或 voice-mini。
+  - README 补充“未装 voice-mini 且关闭判断时轮末不播报”，同步 SPEC 旧边界说明。三段式新增 26 项测试，覆盖全部结束原因及未结状态、真实 settings watch 开关切换、迟到模型/标题、台账写失败仍更新内存；先红后绿，插件全测 883/883、Swift 307/307、npm run build、macos/build.sh、配置表 --check 与 git diff --check 均通过。单提交标签 `j5a-judge-off-silence-20260924`；合回 main 后重建插件，面板行为未变无需专门重启。需用户重启 DSH 后执行 npm run smoke，并切换 judgeEnabled 验收已托管任务完成/失败时关闭无重复播报、开启恢复贾维斯播报。
+
 
 ## 4. 条目详情：记忆系统（§10）
 

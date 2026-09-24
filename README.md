@@ -101,6 +101,7 @@ The table is generated from the actual schemas. Configure paths and session iden
 <!-- CONFIG:END -->
 
 - `judgeProvider` / `judgeModel` 留空时使用贾维斯的模型；`judgeTimeoutMs` 是毫秒，设置页限制 1000–120000；`maxContinueRounds` 为 0–10。Empty judge fields use Jarvis's model; the settings page bounds timeout and continuation rounds.
+- `judgeEnabled=false` 时贾维斯只更新任务台账，轮末播报交给 voice-mini；未装 voice-mini 且关闭判断时轮末不播报，面板未读标记照常出现。Disabling judging silences Jarvis's turn-end announcements; without voice-mini there is no turn-end speech, while panel unread indicators remain available.
 - `autoApprove`: `off` 全部询问用户；`safe` 仅只读白名单自动批准；`safe+grey` 允许灰区模型判断，中风险须命中预设或至少两次用户批准且从未拒绝。高危始终交给用户。High-risk operations always require the user, regardless of mode.
 - `askInterception` 默认关闭，只为托管会话的低风险选择题尝试代答。Opt-in question interception applies only to low-risk choices in managed sessions.
 - `locale` 控制启动问候语言，面板并非完整双语 UI。`titlePrefix`、`archiveIdleDays` 是保留字段，目前不实施 worker 自动改名或按天归档；`ttsBackend` 当前只有 `edge`。These reserved fields do not enable automatic renaming or archival; locale is not a full panel translation switch.

@@ -1,5 +1,5 @@
 import { finalReply, judgePrompt, parseVerdict, planTurnEnd } from './judge.ts';
-import type { Verdict } from './judge.ts';
+import type { TurnEndAction, Verdict } from './judge.ts';
 import { oneShot } from './llm.ts';
 import { FAILED_KINDS } from './live-state.ts';
 import type { TaskLedger } from './tasks.ts';
@@ -54,13 +54,15 @@ export class CompletionJudge {
     const task = ledger.current(session);
     const config = this.deps.config();
     const max = Number.isFinite(config.maxContinueRounds) ? Math.max(0, Math.floor(config.maxContinueRounds)) : 2;
-    const action = planTurnEnd({ managed: true, task, reasonKind, max });
+    const action = planTurnEnd({ managed: true, task, reasonKind, max, judgeEnabled: config.judgeEnabled });
     if (action === 'ignore' || !task) return;
-    if (action === 'drop') {
+    const settleSilent = (next: TurnEndAction): boolean => {
+      if (next !== 'drop' && next !== 'done-silent' && next !== 'open-silent') return false;
       this.invalidate(session);
-      ledger.setStatus(task.id, 'dropped');
-      return;
-    }
+      ledger.setStatus(task.id, next === 'drop' ? 'dropped' : next === 'done-silent' ? 'done' : 'open');
+      return true;
+    };
+    if (settleSilent(action)) return;
     this.jobs.get(session)?.abort();
     const job = new AbortController();
     this.jobs.set(session, job);
@@ -75,6 +77,11 @@ export class CompletionJudge {
     try {
       let title = session;
       try { title = (await this.deps.title(session)).trim() || session; } catch { /* A title is optional. */ }
+      // Settings can change while title/model services are pending. Replan using
+      // the same policy before any speech or continuation side effect.
+      if (settleSilent(planTurnEnd({ managed: this.deps.managed(session), task: ledger.current(session),
+        reasonKind, max, judgeEnabled: this.deps.config().judgeEnabled,
+        stale: !active(action === 'fail' ? 'open' : 'judging') }))) return;
       if (action === 'fail') {
         if (active('open')) await this.deps.say(`${title}失败了：${reasonKind === 'interrupted' ? '被中断' : FAILED_KINDS[reasonKind!]}`);
         return;
@@ -93,8 +100,8 @@ export class CompletionJudge {
         verdict = parseVerdict(raw) ?? verdict;
       }
       const result = planTurnEnd({ managed: this.deps.managed(session), task: ledger.current(session),
-        reasonKind, verdict, max, stale: !active('judging') });
-      if (result === 'ignore') return;
+        reasonKind, verdict, max, judgeEnabled: this.deps.config().judgeEnabled, stale: !active('judging') });
+      if (result === 'ignore' || settleSilent(result)) return;
       const recorded = { ...verdict, at: Date.now() };
       if (result === 'continue') {
         ledger.setStatus(task.id, 'unsatisfied', recorded);

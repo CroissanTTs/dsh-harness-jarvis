@@ -90,11 +90,13 @@ export function parseVerdict(raw: unknown): Verdict | null {
   return null;
 }
 
-export type TurnEndAction = 'ignore' | 'drop' | 'fail' | 'judge' | 'satisfied' | 'unclear' | 'continue' | 'limit';
+export type TurnEndAction = 'ignore' | 'drop' | 'fail' | 'judge' | 'satisfied' | 'unclear' | 'continue' | 'limit'
+  | 'done-silent' | 'open-silent';
 
 /** Pure transition policy; the controller supplies task identity/turn staleness. */
 export function planTurnEnd(args: {
   managed: boolean;
+  judgeEnabled?: boolean;
   task?: Pick<Task, 'status' | 'rounds'>;
   reasonKind?: string;
   verdict?: Verdict;
@@ -105,6 +107,11 @@ export function planTurnEnd(args: {
   const { managed, task, reasonKind, verdict, stale } = args;
   if (!managed || !task || stale || !['open', 'judging', 'unsatisfied'].includes(task.status)) return 'ignore';
   if (reasonKind === 'aborted') return 'drop';
+  // Disabled judging yields all turn-end speech to voice-mini, even on failure.
+  if (args.judgeEnabled === false) {
+    if (reasonKind === 'completed') return 'done-silent';
+    return ['error', 'blocked', 'max-tokens', 'interrupted'].includes(reasonKind ?? '') ? 'open-silent' : 'ignore';
+  }
   if (['error', 'blocked', 'max-tokens', 'interrupted'].includes(reasonKind ?? '')) return 'fail';
   if (reasonKind !== 'completed') return 'ignore';
   if (!verdict) return task.status === 'open' ? 'judge' : 'ignore';

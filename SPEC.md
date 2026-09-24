@@ -94,9 +94,10 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 - `speakAsJarvis` 先检查静音；同宿主 voice-mini 存在时，经 `/voice-mini/test`（`{text, jarvis:true}`）委托合成、提示音和播放；不存在时回退内置 edge-tts。
 - 当前 `voice:tts` 注入只记录服务发现日志，不是实际播放切换接口。
-- 插件用 `ctx.provide('jarvis')` 暴露 `speech`（同步面板口播状态）和 `claimsTurnEnd(sessionId)`。后者仅在**已托管 + 台账有未结任务 + judgeEnabled** 时返回 true。
+- 插件用 `ctx.provide('jarvis')` 暴露 `speech`（同步面板口播状态）和 `claimsTurnEnd(sessionId)`。后者仅在**已托管 + 台账有未结任务 + 播报方式为 relay** 时返回 true（全局 `managedNarration`，可按会话覆盖）。
 - voice-mini 在处理 `turn/end` 时查询可选的 `claimsTurnEnd`；明确返回 true 才跳过该会话的轮末总结及兜底播报。提示音、工具播报、运行状态等保持原行为；服务缺失或查询抛错沿用旧行为。
-- `judgeEnabled=false` 时 voice-mini 不让出，贾维斯静默更新台账：完成标 done、中止标 dropped、失败保持 open；未装 voice-mini 时轮末无播报，面板未读标记仍照常出现。
+- 播报方式为 self 时 voice-mini 不让出，`inject_to_session` 在转发内容末尾附一次 speak 汇报要求，贾维斯静默更新台账：完成标 done、中止标 dropped、失败保持 open，仅在判断未满足时询问续做；未装 voice-mini 时轮末无播报，面板未读标记仍照常出现。
+- 播报方式为 relay 时贾维斯接管轮末，判断 summary 用转述口吻；关闭判断时改用一次转述调用（`purpose: jarvis-relay`）总结最终回复，失败回退“会话名做完了”。
 
 ## 6. 输入:MVP 用悬浮窗文本输入窗口(STT 后续)
 
@@ -138,7 +139,8 @@ DSH / Cordis 加载插件 → apply()（全局）
 | 未满足且达到续轮上限 | 任务 done，立即播报“还没做完…已经续了 X 次…交给你看看”，不合并成成功提示 |
 | `aborted` | dropped，不播报 |
 | `error / blocked / max-tokens / interrupted` | 保持 open；判断开启时立即播报失败原因，不调用判断模型 |
-| `judgeEnabled=false` | 只更新台账，不调用判断模型或播报；运行中关闭后，迟到的标题/判断结果也按静默策略处理 |
+| 播报方式 self | 满足 / unclear / 达上限 / 失败都只更新台账不播报，未满足仍询问续做；关闭判断时不调用模型；运行中切换后，迟到的标题/判断结果按新方式处理 |
+| relay 且 `judgeEnabled=false` | 不判断，用转述调用生成一句总结后按 satisfied 播报；模型失败按 unclear 回退 |
 | 移出托管 / 新轮次 / 新任务 / 插件卸载 | 旧判断和续做答案失效，迟到结果不得覆盖新任务 |
 
 默认 `judgeEnabled=true`、`judgeTimeoutMs=20000`、`maxContinueRounds=2`；模型默认沿用 Jarvis 的 provider/model，可单独配置 judgeProvider/judgeModel。优先请求 `reasoningEffort:'low'`，不支持时去掉后重试。

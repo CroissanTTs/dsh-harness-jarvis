@@ -1,7 +1,8 @@
-import { finalReply, judgePrompt, parseVerdict, planTurnEnd } from './judge.ts';
+import { finalReply, judgePrompt, parseRelay, parseVerdict, planTurnEnd, relayPrompt } from './judge.ts';
 import type { TurnEndAction, Verdict } from './judge.ts';
 import { oneShot } from './llm.ts';
 import { FAILED_KINDS } from './live-state.ts';
+import type { Narration } from './narration.ts';
 import type { TaskLedger } from './tasks.ts';
 
 export interface JudgeConfig {
@@ -17,6 +18,8 @@ export interface JudgeConfig {
 interface Dependencies {
   ledger: TaskLedger;
   managed: (session: string) => boolean;
+  /** Read on every decision so a switch applies to the next turn end. */
+  narration?: (session: string) => Narration;
   config: () => JudgeConfig;
   llm: () => unknown;
   messages: (session: string) => unknown;
@@ -54,7 +57,9 @@ export class CompletionJudge {
     const task = ledger.current(session);
     const config = this.deps.config();
     const max = Number.isFinite(config.maxContinueRounds) ? Math.max(0, Math.floor(config.maxContinueRounds)) : 2;
-    const action = planTurnEnd({ managed: true, task, reasonKind, max, judgeEnabled: config.judgeEnabled });
+    const narration = () => this.deps.narration?.(session);
+    const action = planTurnEnd({ managed: true, task, reasonKind, max, judgeEnabled: config.judgeEnabled,
+      narration: narration() });
     if (action === 'ignore' || !task) return;
     const settleSilent = (next: TurnEndAction): boolean => {
       if (next !== 'drop' && next !== 'done-silent' && next !== 'open-silent') return false;
@@ -80,7 +85,7 @@ export class CompletionJudge {
       // Settings can change while title/model services are pending. Replan using
       // the same policy before any speech or continuation side effect.
       if (settleSilent(planTurnEnd({ managed: this.deps.managed(session), task: ledger.current(session),
-        reasonKind, max, judgeEnabled: this.deps.config().judgeEnabled,
+        reasonKind, max, judgeEnabled: this.deps.config().judgeEnabled, narration: narration(),
         stale: !active(action === 'fail' ? 'open' : 'judging') }))) return;
       if (action === 'fail') {
         if (active('open')) await this.deps.say(`${title}失败了：${reasonKind === 'interrupted' ? '被中断' : FAILED_KINDS[reasonKind!]}`);
@@ -98,9 +103,19 @@ export class CompletionJudge {
           timeoutMs: config.judgeTimeoutMs, purpose: 'jarvis-judge', signal: job.signal,
         });
         verdict = parseVerdict(raw) ?? verdict;
+      } else if (reply && narration() === 'relay') {
+        const prompt = relayPrompt(reply);
+        const raw = await oneShot(this.deps.llm(), {
+          ...prompt, provider: config.judgeProvider.trim() || config.provider,
+          model: config.judgeModel.trim() || config.model, maxTokens: 200,
+          timeoutMs: config.judgeTimeoutMs, purpose: 'jarvis-relay', signal: job.signal,
+        });
+        const line = parseRelay(raw);
+        if (line) verdict = { verdict: 'satisfied', summary: line };
       }
       const result = planTurnEnd({ managed: this.deps.managed(session), task: ledger.current(session),
-        reasonKind, verdict, max, judgeEnabled: this.deps.config().judgeEnabled, stale: !active('judging') });
+        reasonKind, verdict, max, judgeEnabled: this.deps.config().judgeEnabled, narration: narration(),
+        stale: !active('judging') });
       if (result === 'ignore' || settleSilent(result)) return;
       const recorded = { ...verdict, at: Date.now() };
       if (result === 'continue') {

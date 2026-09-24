@@ -1,11 +1,14 @@
 import type { Task } from './tasks.ts';
+import { legacyNarration, type Narration } from './narration.ts';
 
-/** Only unfinished work handed to Jarvis owns the completion announcement. */
+/** Jarvis owns the announcement only for unfinished work it relays. */
 export function claimsTurnEnd(input: {
   managed: boolean;
   task?: Pick<Task, 'status'>;
   judgeEnabled: boolean;
+  narration?: Narration;
 }): boolean {
-  return input.managed === true && input.judgeEnabled === true
+  const narration = input.narration ?? legacyNarration(input.judgeEnabled);
+  return input.managed === true && narration === 'relay'
     && ['open', 'judging', 'unsatisfied'].includes(input.task?.status ?? '');
 }

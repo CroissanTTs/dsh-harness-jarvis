@@ -37,7 +37,7 @@ beforeEach(() => {
 afterEach(async () => { dispose?.(); await flush(); mock.restoreAll(); mock.timers.reset(); syncBuiltinESMExports(); rmSync(dir, { recursive: true, force: true }); });
 function start(extra = {}) {
   dispose = apply(ctx, { audioDir: dir, memoryRoot: dir, lockFile: join(dir, 'lock.json'), managedFile: join(dir, 'managed.json'),
-    tasksFile: join(dir, 'tasks.json'), runtimeFile: join(dir, 'runtime.json'), provider: 'base', model: 'base-model', ...extra });
+    tasksFile: join(dir, 'tasks.json'), runtimeFile: join(dir, 'runtime.json'), provider: 'base', model: 'base-model', managedNarration: 'relay', ...extra });
 }
 async function turn() {
   await tools.get('manage_session').execute({ session: 'worker' });
@@ -49,7 +49,7 @@ const task = () => JSON.parse(readFileSync(join(dir, 'tasks.json'), 'utf8')).at(
 describe('等价类', () => {
   it('installs only supported editable fields in jarvis with restart descriptions', () => {
     start(); assert.equal(installed.ns, 'jarvis'); assert.equal(installed.owner, ctx);
-    assert.deepEqual(Object.keys(installed.schema.dict).sort(), ['provider','model','edgeVoice','greetings','askInterception','autoApprove','judgeEnabled','judgeProvider','judgeModel','judgeTimeoutMs','maxContinueRounds'].sort());
+    assert.deepEqual(Object.keys(installed.schema.dict).sort(), ['provider','model','edgeVoice','greetings','askInterception','autoApprove','managedNarration','judgeEnabled','judgeProvider','judgeModel','judgeTimeoutMs','maxContinueRounds'].sort());
     assert.match(installed.schema.dict.provider.meta.description, /重启 DSH/);
     assert.match(installed.schema.dict.model.meta.description, /重启 DSH/);
     assert.ok(!('runtimeFile' in installed.base));
@@ -59,7 +59,7 @@ describe('等价类', () => {
     start(); assert.deepEqual(options.agentOptions, { provider: 'saved', model: 'saved-model' });
     await turn(); assert.equal(calls[0].provider, 'judge'); assert.equal(calls[0].model, 'judge-model');
     assert.equal(task().status, 'done'); assert.match(announcements[0], /已经续了 0 次/);
-    values = { judgeEnabled: false }; hooks.onChange(); await turn(); assert.equal(calls.length, 1);
+    values = { judgeEnabled: false, managedNarration: 'self' }; hooks.onChange(); await turn(); assert.equal(calls.length, 1);
     assert.equal(task().status, 'done'); assert.equal(task().lastVerdict, undefined);
     assert.equal(announcements.length, 1);
   });
@@ -89,9 +89,9 @@ describe('等价类', () => {
   });
 });
 describe('边界值', () => {
-  it('settings watch 关闭后完成和失败都沉默，重新开启立即恢复判断播报', async () => {
+  it('会话自己播报且关闭判断时完成和失败都沉默，恢复默认转述立即恢复判断播报', async () => {
     start();
-    values = { judgeEnabled: false }; hooks.onChange();
+    values = { judgeEnabled: false, managedNarration: 'self' }; hooks.onChange();
     await turn(); assert.equal(task().status, 'done');
     assert.equal(services.jarvis.claimsTurnEnd('worker'), false);
     await tools.get('inject_to_session').execute({session:'worker', message:'新任务'});

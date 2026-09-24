@@ -89,6 +89,7 @@ async function startPlugin(overrides: Record<string, unknown> = {}): Promise<voi
   dispose = apply(context, {
     audioDir: dir, memoryRoot: dir, lockFile: join(dir, 'lock.json'), managedFile: join(dir, 'managed.json'),
     tasksFile: join(dir, 'tasks.json'), runtimeFile: join(dir, 'runtime.json'),
+    managedNarration: 'relay',
     ...overrides,
   });
   await Promise.resolve();
@@ -406,10 +407,12 @@ describe('边界值', () => {
     assert.equal(questions.length, 1);
   });
 
-  it('判断关闭时不接管，重新启用后等待续轮仍接管，移出即放弃', async () => {
+  it('会话自己播报时不接管，转述时等待续轮仍接管，移出即放弃', async () => {
     await tools.get('inject_to_session').execute({ session: 'a', message: '任务' });
-    await startPlugin({ judgeEnabled: false });
+    await startPlugin({ managedNarration: 'self' });
     assert.equal(context.get('jarvis').claimsTurnEnd('a'), false);
+    await startPlugin({ judgeEnabled: false });
+    assert.equal(context.get('jarvis').claimsTurnEnd('a'), true);
     await startPlugin({ judgeEnabled: true });
     verdict = { verdict: 'unsatisfied', summary: '尚未完成', missing: '补测试' };
     event('a', 'turn/end', 'completed');
@@ -580,5 +583,147 @@ describe('异常路径', () => {
     assert.equal(await post('input', { session: 'a', text: '也不应保留' }), 500);
     await tools.get('inject_to_session').execute({ session: 'a', message: '独立指令' });
     assert.equal(tasks()[0].request, '独立指令');
+  });
+});
+
+describe('播报模式', () => {
+  const lastText = () => (workerMessages.at(-1) as any).content[0].text as string;
+  const row = async (id: string) => (await state()).sessions.find((s: any) => s.id === id);
+  const spoken = () => {
+    const said: any[] = [];
+    mock.method(OutputCoordinator.prototype, 'announce', async (...args: any[]) => { said.push(args); });
+    return said;
+  };
+
+  describe('等价类', () => {
+    it('默认 self：转发附 speak 汇报要求，任务原文不带附言，贾维斯不接管', async () => {
+      await startPlugin({ managedNarration: 'self' });
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      assert.match(lastText(), /^修好测试\n\n（做完后如果有 speak 工具/);
+      assert.equal(tasks()[0].request, '修好测试');
+      assert.equal(context.get('jarvis').claimsTurnEnd('a'), false);
+      assert.equal((await row('a')).narration, 'self');
+    });
+
+    it('self 判断满足后静默结算，不再由贾维斯播报', async () => {
+      await startPlugin({ managedNarration: 'self' });
+      const said = spoken();
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      event('a', 'turn/end', 'completed');
+      await settled(() => tasks()[0]?.status === 'done');
+      assert.equal(llmRequests.length, 1);
+      await flush();
+      assert.deepEqual(said, []);
+    });
+
+    it('relay 且判断关闭：用转述提示词总结并以贾维斯口吻播报', async () => {
+      await startPlugin({ judgeEnabled: false });
+      const said = spoken();
+      llmStream = async function* () {
+        yield { type: 'text-delta', text: '它把测试都修好了' };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      };
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      assert.equal(lastText(), '修好测试');
+      assert.equal(context.get('jarvis').claimsTurnEnd('a'), true);
+      event('a', 'turn/end', 'completed');
+      await settled(() => said.length === 1);
+      assert.equal(llmRequests[0].purpose, 'jarvis-relay');
+      assert.match(llmRequests[0].system, /转述/);
+      assert.match(llmRequests[0].messages[0].content[0].text, /已修复测试并通过验证/);
+      assert.match(said[0][1], /：它把测试都修好了$/);
+      assert.equal(tasks()[0].status, 'done');
+    });
+
+    it('路由和工具都能按会话切换，default 恢复全局默认', async () => {
+      assert.equal(await post('narration', { session: 'a', narration: 'self' }), 200);
+      assert.equal((await row('a')).narration, 'self');
+      assert.equal((await row('b')).narration, 'relay');
+      await tools.get('set_session_narration').execute({ session: 'b', narration: 'self' });
+      assert.equal((await row('b')).narration, 'self');
+      await tools.get('set_session_narration').execute({ session: 'b', narration: 'default' });
+      assert.equal((await row('b')).narration, 'relay');
+      assert.equal(await post('narration', { session: 'a', narration: null }), 200);
+      assert.equal((await row('a')).narration, 'relay');
+    });
+  });
+
+  describe('边界值', () => {
+    it('覆盖只影响对应会话，未托管会话不带播报字段', async () => {
+      await post('narration', { session: 'a', narration: 'self' });
+      await tools.get('inject_to_session').execute({ session: 'a', message: '任务一' });
+      assert.match(lastText(), /speak/);
+      await tools.get('inject_to_session').execute({ session: 'b', message: '任务二' });
+      assert.equal(lastText(), '任务二');
+      await tools.get('release_session').execute({ session: 'b' });
+      assert.equal('narration' in await row('b'), false);
+    });
+
+    it('覆盖值在插件重启后保留，移出托管后丢弃', async () => {
+      await post('narration', { session: 'a', narration: 'self' });
+      await startPlugin();
+      assert.equal((await row('a')).narration, 'self');
+      await tools.get('release_session').execute({ session: 'a' });
+      await tools.get('manage_session').execute({ session: 'a' });
+      assert.equal((await row('a')).narration, 'relay');
+    });
+
+    it('转发后再切换，按轮次结束时的模式决定谁播报', async () => {
+      await startPlugin({ managedNarration: 'self' });
+      const said = spoken();
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      await post('narration', { session: 'a', narration: 'relay' });
+      assert.equal(context.get('jarvis').claimsTurnEnd('a'), true);
+      event('a', 'turn/end', 'completed');
+      await settled(() => said.length === 1);
+      assert.match(said[0][1], /测试已修复/);
+    });
+
+    it('self 下续做仍由贾维斯询问', async () => {
+      await startPlugin({ managedNarration: 'self' });
+      jarvisMessages.length = 0;
+      verdict = { verdict: 'unsatisfied', summary: '没好', missing: '补测试' };
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      event('a', 'turn/end', 'completed');
+      await settled(() => tasks()[0]?.status === 'unsatisfied');
+      assert.equal(jarvisMessages.length, 1);
+    });
+  });
+
+  describe('异常路径', () => {
+    it('路由拒绝坏参数和未托管会话', async () => {
+      for (const body of [{}, { session: 'a' }, { session: 'a', narration: 'loud' }, { session: ' ', narration: 'self' }]) {
+        assert.equal(await post('narration', body), 400);
+      }
+      assert.equal(await post('narration', { session: 'ghost', narration: 'self' }), 404);
+      await tools.get('release_session').execute({ session: 'b' });
+      assert.equal(await post('narration', { session: 'b', narration: 'self' }), 404);
+    });
+
+    it('工具拒绝非法模式和未托管会话', async () => {
+      await assert.rejects(tools.get('set_session_narration').execute({ session: 'a', narration: 'loud' }), /self \/ relay \/ default/);
+      await assert.rejects(tools.get('set_session_narration').execute({ session: 'ghost', narration: 'self' }), /不在托管集/);
+    });
+
+    it('转述模型失败时退回"做完了"，不把空话读出来', async () => {
+      await startPlugin({ judgeEnabled: false });
+      const said = spoken();
+      llmStream = async function* () { yield { type: 'finish', reason: { kind: 'error', failure: { message: 'down' } } }; };
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      event('a', 'turn/end', 'completed');
+      await settled(() => said.length === 1);
+      assert.match(said[0][1], /做完了$/);
+      assert.equal(tasks()[0].status, 'done');
+    });
+
+    it('self 失败时静默保留任务，交给会话自己说明', async () => {
+      await startPlugin({ managedNarration: 'self' });
+      const said = spoken();
+      await tools.get('inject_to_session').execute({ session: 'a', message: '修好测试' });
+      event('a', 'turn/end', 'error');
+      await flush();
+      assert.equal(tasks()[0].status, 'open');
+      assert.deepEqual(said, []);
+    });
   });
 });

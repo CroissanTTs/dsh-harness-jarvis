@@ -31,6 +31,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { LiveState } from './live-state.ts';
 import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
+import { effectiveNarration, isNarration, withNarrationNote, type Narration } from './narration.ts';
 import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
 import { MemoryStore } from './memory/store.ts';
@@ -153,6 +154,7 @@ export const Config = z.object({
   judgeEnabled: z.boolean().default(true),
   askInterception: z.boolean().default(false),
   autoApprove: z.union(['off', 'safe', 'safe+grey']).default('off'),
+  managedNarration: z.union(['self', 'relay']).default('self'),
   judgeProvider: z.string().default(''),
   judgeModel: z.string().default(''),
   judgeTimeoutMs: z.number().default(20_000),
@@ -175,6 +177,7 @@ export const SettingsSchema = z.object({
   greetings: Config.dict!.greetings.description('附加欢迎语；重启欢迎时随机选用。'),
   askInterception: Config.dict!.askInterception.description('允许贾维斯代答托管会话的低风险选择题；默认关闭，不确定时仍交给你。'),
   autoApprove: Config.dict!.autoApprove.description('自动审批：off 关闭，safe 仅只读白名单，safe+grey 启用灰色模型判断及中危预设/历史依据；高危始终交给你。下一次请求生效。'),
+  managedNarration: Config.dict!.managedNarration.description('托管会话默认播报方式：self 由会话自己用 speak 汇报（省贾维斯的 token），relay 由贾维斯总结后以转述口吻播报；可在悬浮窗按会话单独切换。下一轮结束生效。'),
   judgeEnabled: Config.dict!.judgeEnabled.description('启用任务完成判断；下一次判断生效。'),
   judgeProvider: Config.dict!.judgeProvider.description('判断模型提供方；留空使用当前贾维斯提供方。'),
   judgeModel: Config.dict!.judgeModel.description('判断模型；留空使用当前贾维斯模型。'),
@@ -200,6 +203,7 @@ interface JarvisConfig {
   judgeEnabled: boolean;
   askInterception: boolean;
   autoApprove: 'off' | 'safe' | 'safe+grey';
+  managedNarration: Narration;
   judgeProvider: string;
   judgeModel: string;
   judgeTimeoutMs: number;
@@ -234,6 +238,7 @@ const COMMANDER_PERSONA = [
   '- 你只能向托管集里的会话发内容。用户说"把某某会话交给你/你来管"时,先 list_managed 找到它的 id,再 manage_session;说"不用管了"就 release_session。',
   '- 你不堆 worker 的内容进自己记忆;worker 各自干净。你只干路由/口播/inject 决策/续轮判断。',
   '- 不能 inject_to_session 给自己。',
+  '- 托管会话有两种播报方式：self 由会话自己用 speak 汇报（你转发时系统会自动附上汇报要求，你别再重复），relay 由你在它做完后转述。用户说"让它自己汇报/你来转述"时用 set_session_narration 切换。',
   '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
   '- 收到以 [会话 … 判断未满足] 开头的通知时，按通知要求用 ask_user 询问并传入 session 和 task，不要自己决定续做。用户选继续才用 inject_to_session 发送具体续做指令；选不用了就结束。回答已失效时不要再发送旧续做指令。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
@@ -251,6 +256,8 @@ interface JarvisDeps {
   removeApprovalRule: (key: ApprovalRuleKey) => Promise<boolean>;
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
+  narration: (id: string) => Narration;
+  setNarration: (id: string, narration: Narration | undefined) => 'ok' | 'not-managed';
   say: (text: string) => Promise<SpeakResult>;
   ask: (question: string, choices: string[], exec?: { agent?: unknown; signal?: AbortSignal },
     continuation?: { session: string; task: string }) => Promise<string>;
@@ -470,9 +477,17 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       return sessionRow({
         id, title: titleCache.map[id] || '', status: live.status(id, agentRunning(ctx, id)), unread: live.isUnread(id),
         managed: managed.has(id),
+        ...(managed.has(id) ? { narration: narrationOf(id) } : {}),
         ...(workspace ? { workspace } : {}),
       }, ledger.peekCurrent(id));
     });
+  };
+
+  const narrationOf = (id: string): Narration => effectiveNarration(entry.managedNarration, managed.narration(id));
+  const setNarration = (id: string, narration: Narration | undefined): 'ok' | 'not-managed' => {
+    if (!managed.has(id)) return 'not-managed';
+    if (managed.setNarration(id, narration)) live.touch();
+    return 'ok';
   };
 
   const setManaged = async (id: string, on: boolean): Promise<'ok' | 'not-found'> => {
@@ -493,6 +508,8 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     removeApprovalRule,
     sessionRows,
     setManaged,
+    narration: narrationOf,
+    setNarration,
     say: (text) => speakAsJarvis(builtInTts, entry, text, live),
     ask: async (question, choices, exec, continuation) => {
       const ask = async (): Promise<string> => {
@@ -531,6 +548,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       managed: managed.has(id),
       task: managed.has(id) ? ledger.current(id) : undefined,
       judgeEnabled: entry.judgeEnabled,
+      narration: narrationOf(id),
     }),
   });
   debug(entry, 'provided "jarvis" service (sessionId=' + entry.jarvisSessionId + ')');
@@ -539,6 +557,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   const completion = new CompletionJudge({
     ledger,
     managed: id => managed.has(id),
+    narration: narrationOf,
     config: () => entry,
     llm: () => llm,
     messages: id => (ctx as any).get?.('agents')?.get?.(id)?.session?.deriveMessages?.() ?? [],
@@ -703,6 +722,16 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             if (!session || typeof body.managed !== 'boolean') { sendJson(res, 400, { error: 'need {session, managed}' }); return; }
             if (await setManaged(session, body.managed) === 'not-found') { sendJson(res, 404, { error: 'no such session' }); return; }
             sendJson(res, 200, { managed: managed.list() });
+            return;
+          }
+          if (url === '/narration' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            const session = typeof body.session === 'string' ? body.session.trim() : '';
+            if (!session || !(body.narration === null || isNarration(body.narration))) {
+              sendJson(res, 400, { error: 'need {session, narration: self|relay|null}' }); return;
+            }
+            if (setNarration(session, body.narration ?? undefined) === 'not-managed') { sendJson(res, 404, { error: 'session not managed' }); return; }
+            sendJson(res, 200, { session, narration: narrationOf(session) });
             return;
           }
           if (url === '/agents' && req.method === 'GET') {
@@ -1239,10 +1268,10 @@ function readVoiceMiniRuntime(): { token?: string; rendererHeader?: { name: stri
 /** Who is speaking comes from voice-mini's jarvis.speech() signals; its queue
  *  (paused / waiting lines) is read here. Cached briefly: /jarvis/state is
  *  polled every second and this is a same-host round trip. */
-type Narration = { paused: boolean; queued: number };
-const SILENT: Narration = { paused: false, queued: 0 };
+type VoiceQueue = { paused: boolean; queued: number };
+const SILENT: VoiceQueue = { paused: false, queued: 0 };
 const voiceMiniCache = { at: 0, value: SILENT };
-async function voiceMiniQueue(origin: string | null): Promise<Narration> {
+async function voiceMiniQueue(origin: string | null): Promise<VoiceQueue> {
   if (!origin || Date.now() - voiceMiniCache.at < 400) return voiceMiniCache.value;
   voiceMiniCache.at = Date.now();
   const vm = readVoiceMiniRuntime();
@@ -1368,7 +1397,8 @@ const textOutput = {
 /** Human-readable session line for the model: title, workspace, status, id. */
 function describeSession(s: SessionRow): string {
   const name = s.title || '(无标题)';
-  return `- ${name}${s.workspace ? ` [${s.workspace}]` : ''} · ${s.status} · id=${s.id}`;
+  const narration = s.narration ? ` · 播报=${s.narration === 'self' ? '自己汇报' : '贾维斯转述'}` : '';
+  return `- ${name}${s.workspace ? ` [${s.workspace}]` : ''} · ${s.status}${narration} · id=${s.id}`;
 }
 
 function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: JarvisDeps): void {
@@ -1475,7 +1505,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
       const note: UserMessage = {
         id: MessageId(`jarvis-${Date.now().toString(36)}`),
         role: 'user',
-        content: [{ type: 'text', text: args.message }],
+        content: [{ type: 'text', text: withNarrationNote(args.message, deps.narration(args.session)) }],
         source: { kind: 'plugin', plugin: 'dsh-harness-jarvis', form: 'notice', summary: 'jarvis inject' },
       };
       const how = deliver(target, note);
@@ -1512,6 +1542,23 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
       if (args.session === selfId) throw new Error('manage_session: cannot manage self');
       if (await deps.setManaged(args.session, true) === 'not-found') throw new Error('manage_session: 找不到这个会话');
       return text('已纳入托管');
+    },
+  } as never));
+
+  tools.register(defineTool({
+    name: 'set_session_narration',
+    description: '切换托管会话的播报方式：self 让会话自己用 speak 汇报结果（省 token），relay 由你总结后转述；default 恢复为用户设置里的默认值。',
+    parameters: {
+      session: { type: 'string' as const, required: true },
+      narration: { type: 'string' as const, required: true },
+    },
+    output: textOutput,
+    isConcurrencySafe: () => true,
+    async execute(args: { session: string; narration: string }) {
+      const narration = args.narration === 'default' ? undefined : args.narration;
+      if (narration !== undefined && !isNarration(narration)) throw new Error('set_session_narration: narration 只能是 self / relay / default');
+      if (deps.setNarration(args.session, narration) === 'not-managed') throw new Error('set_session_narration: 该会话不在托管集');
+      return text(deps.narration(args.session) === 'self' ? '已改为会话自己汇报' : '已改为由你转述');
     },
   } as never));
 

@@ -49,6 +49,7 @@ import { TaskLedger } from './tasks.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
+import { needsRename } from './title.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -708,8 +709,17 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   ctx.inject(['settings' as any], () => {
     // TODO §2: installSettingsSection
   });
-  ctx.inject(['sessionTitle' as any], () => {
-    // TODO §2: title service for worker prefix
+  let titleService: any;
+  let jarvisReady = false;
+  let titleAttempted = false;
+  const setJarvisTitle = () => {
+    if (!jarvisReady || !titleService || titleAttempted) return;
+    titleAttempted = true;
+    void trySetTitle(ctx, titleService, entry, '贾维斯');
+  };
+  ctx.inject(['sessionTitle' as any], (tsCtx: Context) => {
+    titleService = (tsCtx as any).get('sessionTitle');
+    setJarvisTitle();
   });
 
   // ── 挂点2: create Jarvis agent with setup callback ────────────────────
@@ -737,6 +747,8 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       },
     }).then((handle: any) => {
       jarvisHandle = handle;
+      jarvisReady = true;
+      setJarvisTitle();
       debug(entry, 'createAgent SUCCESS — Jarvis agent created + decorated (first-install)');
       ctx.logger?.warn?.('dsh-harness-jarvis: Jarvis agent created + decorated');
       kickstartJarvis(handle, entry);
@@ -753,6 +765,8 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           },
         }).then((handle: any) => {
           jarvisHandle = handle;
+          jarvisReady = true;
+          setJarvisTitle();
           debug(entry, 'resume SUCCESS — Jarvis agent resumed + decorated (restart)');
           void speakGreeting(builtInTts, entry);
         }).catch((err2: unknown) => {
@@ -762,12 +776,6 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     });
   });
 
-  let titleService: any;
-  ctx.inject(['sessionTitle' as any], (tsCtx: Context) => {
-    titleService = (tsCtx as any).get('sessionTitle');
-    debug(entry, 'sessionTitle attached, keys=' + Object.keys(titleService ?? {}).join(','));
-  });
-
   // ── 挂点1: global listeners (worker events, filtered to managed) ──────
   ctx.on('session/event' as any, (session: { id?: string } | undefined, event: { type?: string; data?: any }) => {
     const sid = typeof session?.id === 'string' ? session.id : undefined;
@@ -775,17 +783,6 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       if (event?.type === 'turn/start') live.turnStarted(sid);
       else if (event?.type === 'turn/end') live.turnEnded(sid, event.data?.reason);
       else if (event?.type === 'user/message' && event.data?.source === 'user') live.markRead(sid);
-    }
-    // Jarvis agent's own turn/end → re-set title (DSH auto-title overwrites it)
-    if (sid === entry.jarvisSessionId && event?.type === 'turn/end') {
-      trySetTitle(titleService, entry, '贾维斯');
-      // Diagnostic: log the jarvis session's message count after each turn
-      try {
-        const msgs = jarvisHandle?.session?.deriveMessages?.() ?? [];
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        const lastText = last?.content?.map((b: any) => b.type === 'text' ? b.text : '').join('').slice(0, 80) ?? '(none)';
-        debug(entry, 'jarvis turn/end: ' + msgs.length + ' msgs, last=[' + (last?.role ?? '?') + '] ' + lastText);
-      } catch (e) { debug(entry, 'jarvis turn/end: deriveMessages failed: ' + (e instanceof Error ? e.message : String(e))); }
     }
     if (!sid || !managed.has(sid)) return;
     switch (event?.type) {
@@ -1056,22 +1053,11 @@ function approvalCommand(req: { agent?: any; callId?: unknown }): string | undef
   return undefined;
 }
 
-/** Try to set the Jarvis session title (DSH auto-title overwrites it after each turn). */
-function trySetTitle(titleService: any, entry: JarvisConfig, title: string): void {
-  if (!titleService) { debug(entry, 'titleService not available'); return; }
+/** Rename pins the title, so each successful startup only needs one attempt. */
+async function trySetTitle(ctx: Context, titleService: any, entry: JarvisConfig, title: string): Promise<void> {
   try {
-    if (typeof titleService.set === 'function') {
-      titleService.set(entry.jarvisSessionId, title);
-      debug(entry, 'title set via .set()');
-    } else if (typeof titleService.setTitle === 'function') {
-      titleService.setTitle(entry.jarvisSessionId, title);
-      debug(entry, 'title set via .setTitle()');
-    } else if (typeof titleService.update === 'function') {
-      titleService.update(entry.jarvisSessionId, { title });
-      debug(entry, 'title set via .update()');
-    } else {
-      debug(entry, 'titleService no set/setTitle/update — keys=' + Object.keys(titleService).join(','));
-    }
+    const session = (ctx as any).get('sessions')?.get(entry.jarvisSessionId);
+    if (session && needsRename(titleService.get(session), title)) await titleService.rename(session, title);
   } catch (e) {
     debug(entry, 'trySetTitle failed: ' + (e instanceof Error ? e.message : String(e)));
   }

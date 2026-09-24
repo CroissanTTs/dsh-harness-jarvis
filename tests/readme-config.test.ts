@@ -2,24 +2,32 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Config, SettingsSchema } from '../src/index.ts';
-import { renderConfigTable, replaceConfigTable } from '../scripts/readme-config.mjs';
+import { renderConfigTable, replaceConfigTable, PUBLIC_FIELDS } from '../scripts/readme-config.mjs';
 
 describe('等价类', () => {
   it('README configuration is generated from the actual Config and settings schema', () => {
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
     assert.equal(replaceConfigTable(readme, renderConfigTable(Config, SettingsSchema)), readme);
-    for (const key of Object.keys(Config.dict!)) assert.ok(readme.includes('`' + key + '`'));
+    for (const key of Object.keys(Config.dict!)) {
+      // Public fields must appear in the README; internal fields must NOT be
+      // advertised there (they stay configurable but undocumented).
+      if (PUBLIC_FIELDS.has(key)) {
+        assert.ok(readme.includes('`' + key + '`'));
+      } else {
+        assert.ok(!readme.includes('`' + key + '`'), `internal field ${key} should not be in README`);
+      }
+    }
   });
   it('renders enum choices, defaults and settings availability without applying the plugin', () => {
     const table = renderConfigTable(Config, SettingsSchema);
-    assert.match(table, /autoApprove.*off.*safe.*safe\+grey/);
-    assert.match(table, /judgeTimeoutMs.*20000.*是/);
-    assert.match(table, /runtimeFile.*否/);
+    assert.match(table, /locale.*zh.*en/);
+    assert.match(table, /edgeVoice.*YunjianNeural.*是/);
+    assert.match(table, /audioDir.*否/);
   });
 });
 describe('边界值', () => {
   it('escapes pipes, backticks and HTML in defaults so values cannot break the table', () => {
-    const schema = Object.assign(() => ({ field: '<b>|`\n' }), { dict: { field: { type: 'string' } } });
+    const schema = Object.assign(() => ({ locale: '<b>|`\n' }), { dict: { locale: { type: 'string' } } });
     const table = renderConfigTable(schema, { dict: {} });
     assert.ok(table.includes('&lt;b&gt;&#124;&#96;\\n'));
     assert.equal(table.split('\n').length, 3);

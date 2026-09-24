@@ -6,14 +6,23 @@ const END = '<!-- CONFIG:END -->';
 const cell = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/\|/g, '&#124;').replace(/`/g, '&#96;').replace(/\r?\n/g, '<br>');
 
+/** Public configuration surface: only assistant-relevant fields are documented
+ *  in the README. Fields belonging to mechanisms that are not part of the
+ *  current release stay internal (still configurable, just not advertised). */
+export const PUBLIC_FIELDS = new Set([
+  'locale', 'audioDir', 'ttsBackend', 'edgeVoice', 'greetings', 'provider', 'model',
+]);
+
 /** Accept schemas as values so tests can use source Config without a build. */
 export function renderConfigTable(config, settings) {
   const defaults = config({});
-  const rows = Object.entries(config.dict).map(([key, schema]) => {
-    const type = schema.type === 'union' ? schema.list.map(item => JSON.stringify(item.value)).join(' / ')
-      : schema.type === 'array' ? 'string[]' : schema.type;
-    return `| \`${cell(key)}\` | ${cell(type)} | \`${cell(JSON.stringify(defaults[key]))}\` | ${Object.hasOwn(settings.dict, key) ? '是 / Yes' : '否 / No'} |`;
-  });
+  const rows = Object.entries(config.dict)
+    .filter(([key]) => PUBLIC_FIELDS.has(key))
+    .map(([key, schema]) => {
+      const type = schema.type === 'union' ? schema.list.map(item => JSON.stringify(item.value)).join(' / ')
+        : schema.type === 'array' ? 'string[]' : schema.type;
+      return `| \`${cell(key)}\` | ${cell(type)} | \`${cell(JSON.stringify(defaults[key]))}\` | ${Object.hasOwn(settings.dict, key) ? '是 / Yes' : '否 / No'} |`;
+    });
   return ['| 字段 / Field | 类型 / Type | 默认值 / Default | DSH 设置页 / Settings |',
     '|---|---|---|---|', ...rows].join('\n');
 }

@@ -1,12 +1,12 @@
 {
   "name": "dsh-harness-jarvis",
   "version": "0.7.1",
-  "description": "A floating desktop assistant for DSH Desktop — a particle orb for quick permission approvals and fast floating conversations, with optional session coordination.",
+  "description": "A floating desktop assistant for DSH Desktop — a particle orb for quick permission approvals and fast floating conversations.",
   "license": "MIT",
   "author": "zane",
   "keywords": [
     "deepseek", "dsh", "harness", "jarvis", "assistant",
-    "agent", "multi-session", "approval", "memory", "voice", "tts", "orb"
+    "agent", "approval", "voice", "tts", "orb"
   ],
   "type": "module",
   "main": "./lib/index.js",
@@ -23,8 +23,7 @@
     "scripts/synth-edge.mjs",
     "scripts/readme-config.mjs",
     "docs/images",
-    "docs/design",
-    "docs/superpowers/plans/2026-09-24-jarvis-backlog.md"
+    "docs/design"
   ],
   "engines": { "node": ">=20" },
   "scripts": {

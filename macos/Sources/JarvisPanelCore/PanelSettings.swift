@@ -63,6 +63,7 @@ public struct PanelSettings: Codable, Equatable, Sendable {
   /// "jarvis" or a session id; nil = never sent yet.
   public var lastTarget: String?
   public var historyExpanded = false
+  public var showCaptions = true
 
   public init() {}
 
@@ -94,12 +95,13 @@ public struct PanelSettings: Codable, Equatable, Sendable {
     positions = value(.positions, d.positions)
     lastTarget = value(.lastTarget, d.lastTarget)
     historyExpanded = value(.historyExpanded, d.historyExpanded)
+    showCaptions = value(.showCaptions, d.showCaptions)
   }
 
   private enum CodingKeys: String, CodingKey {
     case dshOpacity, otherOpacity, proximityFade, keepProminent, hideInFullscreen, hideInMissionControl
     case hideInAppLauncher, hiddenApps, tier, followReduceMotion, dockToStrip, positions, lastTarget
-    case historyExpanded
+    case historyExpanded, showCaptions
   }
 }
 

@@ -17,7 +17,13 @@ struct OverlayRootView: View {
         column(q)
           .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: q.side == .right ? .leading : .trailing)))
       }
-      if let toast = state.toast, !model.quickBarOpen, let q = state.quick {
+      if !model.quickBarOpen, model.caption != nil {
+        let rect = state.local(state.captionFrame)
+        caption
+          .frame(width: rect.width)
+          .position(x: rect.midX, y: rect.midY)
+      }
+      if let toast = state.toast, model.caption == nil, !model.quickBarOpen, let q = state.quick {
         toastView(toast, q)
           .transition(.opacity)
       }
@@ -29,6 +35,7 @@ struct OverlayRootView: View {
     }
     .animation(.easeOut(duration: 0.16), value: model.quickBarOpen)
     .animation(.easeOut(duration: 0.2), value: state.toast)
+    .animation(state.reduceCaptionMotion ? nil : .easeOut(duration: 0.2), value: model.caption)
   }
 
   private func column(_ q: QuickBarLayout) -> some View {
@@ -36,6 +43,7 @@ struct OverlayRootView: View {
     let height = q.stackLimit + q.bar.height
     let cards = q.growsUp ? model.visiblePending.reversed() : model.visiblePending
     return VStack(alignment: .leading, spacing: 6) {
+      caption
       if q.growsUp {
         if model.historyExpanded { HistoryView(model: model, growsUp: true) }
         more
@@ -54,6 +62,14 @@ struct OverlayRootView: View {
     .position(x: bar.midX, y: q.growsUp ? bar.maxY - height / 2 : bar.minY + height / 2)
     .animation(.easeOut(duration: 0.18), value: model.historyExpanded)
     .animation(.easeOut(duration: 0.18), value: model.visiblePending.map(\.id))
+  }
+
+  @ViewBuilder
+  private var caption: some View {
+    if let line = model.caption, let text = model.captionText {
+      CaptionView(text: text, source: line.source)
+        .transition(state.reduceCaptionMotion ? .identity : .opacity)
+    }
   }
 
   @ViewBuilder

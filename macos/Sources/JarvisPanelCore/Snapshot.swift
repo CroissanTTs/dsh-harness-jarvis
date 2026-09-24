@@ -149,15 +149,17 @@ public struct VoiceState: Decodable, Sendable, Equatable {
   public var speaking = false
   public var source: SpeechSource?
   public var sessionId: String?
+  public var text: String?
   public var muted = false
   public var paused = false
   public var queued = 0
 
-  public init(speaking: Bool = false, source: SpeechSource? = nil, sessionId: String? = nil,
+  public init(speaking: Bool = false, source: SpeechSource? = nil, sessionId: String? = nil, text: String? = nil,
               muted: Bool = false, paused: Bool = false, queued: Int = 0) {
     self.speaking = speaking
     self.source = speaking ? (source ?? .jarvis) : nil
     self.sessionId = speaking ? sessionId : nil
+    self.text = speaking ? text : nil
     self.muted = muted
     self.paused = paused
     self.queued = queued
@@ -170,6 +172,7 @@ public struct VoiceState: Decodable, Sendable, Equatable {
       let raw = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
       source = raw.flatMap(SpeechSource.init(rawValue:)) ?? .jarvis
       sessionId = (try? c.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
+      text = (try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil
     }
     muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
@@ -179,7 +182,7 @@ public struct VoiceState: Decodable, Sendable, Equatable {
   /// Something is playing, parked, or waiting to play.
   public var active: Bool { speaking || paused || queued > 0 }
 
-  private enum CodingKeys: String, CodingKey { case speaking, source, sessionId, muted, paused, queued }
+  private enum CodingKeys: String, CodingKey { case speaking, source, sessionId, text, muted, paused, queued }
 }
 
 /// GET /jarvis/state. Decoding is lenient so the panel keeps working against an

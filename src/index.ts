@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { LiveState } from './live-state.ts';
 import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
@@ -446,7 +446,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     memory,
     sessionRows,
     setManaged,
-    say: (text) => speakAsJarvis(builtInTts, entry, text),
+    say: (text) => speakAsJarvis(builtInTts, entry, text, live),
     ask: async (question, choices, exec, continuation) => {
       const ask = async (): Promise<string> => {
         const uq = (ctx as any).get?.('userQuestions') as { ask?: (r: unknown) => Promise<any> } | undefined;
@@ -556,7 +556,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         try {
           if (url === '/state' && req.method === 'GET') {
             const narration = await voiceMiniQueue(webOrigin);
-            const speech = live.speech() ?? (playingChild !== null ? { source: 'jarvis' as const } : null);
+            const speech = live.speech();
             const speaking = speech !== null;
             const sessions = await sessionRows();
             const handed = sessions.filter((s) => s.managed);
@@ -569,7 +569,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               error: live.error(),
               voice: {
                 speaking,
-                ...(speech ? { source: speech.source, ...(speech.sessionId ? { sessionId: speech.sessionId } : {}) } : {}),
+                ...(speech ?? {}),
                 muted: voiceMuted, paused: narration.paused, queued: narration.queued,
               },
               counts: {
@@ -825,7 +825,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           jarvisReady = true;
           setJarvisTitle();
           debug(entry, 'resume SUCCESS — Jarvis agent resumed + decorated (restart)');
-          void speakGreeting(builtInTts, entry);
+          void speakGreeting(builtInTts, entry, live);
         }).catch((err2: unknown) => {
           debug(entry, 'resume ALSO failed: ' + (err2 instanceof Error ? err2.message : String(err2)));
         });
@@ -987,9 +987,10 @@ function kickstartJarvis(handle: any, entry: JarvisConfig): void {
 async function speakGreeting(
   tts: { synthesize: (text: string, outFile: string) => Promise<unknown>; play: (file: string) => unknown },
   entry: JarvisConfig,
+  live: LiveState,
 ): Promise<void> {
   const text = pickGreeting(entry);
-  debug(entry, 'speakGreeting: picked "' + text + '" → ' + await speakAsJarvis(tts, entry, text));
+  debug(entry, 'speakGreeting: picked "' + text + '" → ' + await speakAsJarvis(tts, entry, text, live));
 }
 
 /** Jarvis's own voice (greetings, say_to_user): voice-mini /test with the
@@ -998,6 +999,7 @@ async function speakAsJarvis(
   tts: { synthesize: (text: string, outFile: string) => Promise<unknown>; play: (file: string) => unknown },
   entry: JarvisConfig,
   text: string,
+  live: LiveState,
 ): Promise<SpeakResult> {
   if (voiceMuted) return 'muted';
   if (webOrigin && await speakViaVoiceMini(webOrigin, text, entry)) return 'voice-mini';
@@ -1005,7 +1007,12 @@ async function speakAsJarvis(
     const hash = createHash('sha1').update(text).digest('hex').slice(0, 16);
     const outFile = join(resolveDir(entry.audioDir), `say-${hash}.mp3`);
     if (!existsSync(outFile)) await tts.synthesize(text, outFile);
-    void tts.play(outFile);
+    const id = `built-in-${randomUUID()}`;
+    live.speechSignal({ phase: 'start', id, source: 'jarvis', text });
+    // Playback remains asynchronous; always retire this exact utterance on failure or completion.
+    void Promise.resolve().then(() => tts.play(outFile))
+      .catch((error) => debug(entry, 'built-in playback failed: ' + String(error)))
+      .finally(() => live.speechSignal({ phase: 'end', id, source: 'jarvis' }));
     return 'built-in';
   } catch (e) {
     debug(entry, 'speakAsJarvis built-in failed: ' + (e instanceof Error ? e.message : String(e)));

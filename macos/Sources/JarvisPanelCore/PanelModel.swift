@@ -86,6 +86,30 @@ public final class PanelModel: ObservableObject {
   /// The pointer is over the orb: it shows standby, as when the quick bar is open.
   @Published public private(set) var hovering = false
 
+  @Published public private(set) var caption: Caption?
+  private var captionState = CaptionState()
+  private var captionTask: Task<Void, Never>?
+
+  public var captionText: String? {
+    guard let caption else { return nil }
+    guard caption.source == .session else { return caption.text }
+    let name = caption.sessionId.map { label(for: .session($0)) } ?? "其他会话"
+    return "\(name)：\(caption.text)"
+  }
+
+  public func refreshCaptions() {
+    captionTask?.cancel()
+    let now = ProcessInfo.processInfo.systemUptime
+    caption = captionState.caption(now: now, enabled: store.settings.showCaptions)
+    guard caption != nil, let end = captionState.lastEnd else { return }
+    let remaining = max(0, CaptionState.holdDuration - (now - end))
+    captionTask = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+      guard let self else { return }
+      caption = captionState.caption(now: ProcessInfo.processInfo.systemUptime, enabled: store.settings.showCaptions)
+    }
+  }
+
   private let api: JarvisAPI
   private let store: SettingsStore
 
@@ -162,8 +186,12 @@ public final class PanelModel: ObservableObject {
     do {
       snapshot = try await api.snapshot()
       connection = .online
+      captionState.update(snapshot?.voice ?? VoiceState(), now: ProcessInfo.processInfo.systemUptime)
+      refreshCaptions()
     } catch {
       connection = .offline(Self.describe(error))
+      captionState.update(VoiceState(), now: ProcessInfo.processInfo.systemUptime)
+      refreshCaptions()
       return
     }
     if quickBarOpen && historyExpanded {

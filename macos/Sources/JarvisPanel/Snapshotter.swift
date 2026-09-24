@@ -50,6 +50,8 @@ final class Snapshotter {
       Scene(name: "13-corner-topright-speaking-hover", demo: 3, origin: CGPoint(x: v.maxX - 140, y: v.maxY - 140), hover: true),
       Scene(name: "14-narrating-other-session", demo: 6, origin: upper),
       Scene(name: "15-targets-managed", demo: 0, origin: lower, quick: true, targets: true),
+      Scene(name: "16-caption-jarvis", demo: 3, origin: upper),
+      Scene(name: "17-caption-session", demo: 6, origin: lower, quick: true, history: true),
       Scene(name: "18-targets-task-state", demo: 7, origin: lower, quick: true, targets: true),
     ]
     let (orb, _, model) = controller.snapshotParts

@@ -21,6 +21,7 @@ final class SettingsModel: ObservableObject {
         current.tier = s.tier
         current.followReduceMotion = s.followReduceMotion
         current.dockToStrip = s.dockToStrip
+        current.showCaptions = s.showCaptions
       }
       onChange()
     }
@@ -46,6 +47,7 @@ struct SettingsView: View {
       Section("显示") {
         opacitySlider("DSH 在前台时", value: $model.settings.dshOpacity)
         opacitySlider("其他应用在前台时", value: $model.settings.otherOpacity)
+        Toggle("显示播报字幕", isOn: $model.settings.showCaptions)
         Toggle("鼠标靠近时渐显", isOn: $model.settings.proximityFade)
         Toggle("需要处理或出错时保持醒目", isOn: $model.settings.keepProminent)
       }

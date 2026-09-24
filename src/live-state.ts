@@ -50,8 +50,8 @@ export interface PendingWire {
 export interface AnswerBody { id?: unknown; decision?: unknown; choice?: unknown; text?: unknown }
 
 /** voice-mini → jarvis.speech(): one spoken line starting or ending. */
-export interface SpeechSignal { phase: 'start' | 'end'; id: string; source: 'jarvis' | 'session'; sessionId?: string }
-export interface Speech { source: 'jarvis' | 'session'; sessionId?: string }
+export interface SpeechSignal { phase: 'start' | 'end'; id: string; source: 'jarvis' | 'session'; sessionId?: string; text?: string }
+export interface Speech { source: 'jarvis' | 'session'; sessionId?: string; text?: string }
 export type AnswerResult = 'ok' | 'not-found' | 'invalid';
 
 interface HeldApproval {
@@ -143,8 +143,9 @@ export class LiveState {
     if (!s || typeof s.id !== 'string' || !s.id) return;
     if (s.phase === 'start') {
       const source = s.source === 'session' ? 'session' : 'jarvis';
+      const text = typeof s.text === 'string' ? Array.from(s.text.trim()).slice(0, 120).join('') : '';
       this.speaking = {
-        id: s.id, source, at: this.now(),
+        id: s.id, source, at: this.now(), ...(text ? { text } : {}),
         ...(typeof s.sessionId === 'string' && s.sessionId ? { sessionId: s.sessionId } : {}),
       };
       this.bump();
@@ -158,7 +159,7 @@ export class LiveState {
   speech(): Speech | null {
     const s = this.speaking;
     if (!s || this.now() - s.at >= SPEECH_STALE_MS) return null;
-    return { source: s.source, ...(s.sessionId ? { sessionId: s.sessionId } : {}) };
+    return { source: s.source, ...(s.text ? { text: s.text } : {}), ...(s.sessionId ? { sessionId: s.sessionId } : {}) };
   }
 
   // ── session events ────────────────────────────────────────────────────

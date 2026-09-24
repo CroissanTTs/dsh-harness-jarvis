@@ -58,7 +58,7 @@
 
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
-| U1 | 面板显示播报字幕（§12 口播内容） | — | 中 | 待办 |
+| U1 | 面板显示播报字幕（§12 口播内容） | — | 中 | 已完成（`u1-captions-20260924`） |
 | H1 | 全局快捷键呼出输入框（可并行） | — | 中 | 待办 |
 
 ### 阶段 6：设置与提问
@@ -470,7 +470,10 @@
   - 面板 Core：`VoiceState` 解码（有 text、没 text、非 speaking 时 text 被丢弃、text 类型错误）；字幕显示逻辑抽成纯函数 `caption(for voice, now, lastEnd) -> Caption?`，覆盖 1.5 秒保留边界、来源切换、关闭开关。
   - 快照：`Snapshotter` 加场景 `16-caption-jarvis`、`17-caption-session`，DemoAPI 的 narrating 场景补上 text。
 - **注意**：跨仓库改动，voice-mini 单独提交；voice-mini 未更新时面板只是不显示字幕，不能报错。
-- **实现记录**：（空）
+- **实现记录**（Codex U1 / 2026-09-24）：voice-mini 的每条播报 start 和缓存重播传递 `text`，end 不重复携带文字，提示音保持无字幕。贾维斯 `LiveState` 按 Unicode 码点 trim / 截断 120 字，`/jarvis/state` 仅在 speaking 时带文字；内置 TTS 在合成成功后、播放前发 start，并通过播放 Promise 的 finally 发匹配 id 的 end，覆盖播放结束和启动/异步失败，不等待音频完成阻塞工具返回。Swift 容错解码，独立 `CaptionState` 维护结束后 1.5 秒保留，`PanelModel` 定时清除、断线退场，并复用会话名消歧；青/紫两行气泡不参与鼠标命中，输入开启时放在历史区域顶部，设置立即应用且持久化，系统减少动态效果时字幕直接显隐。
+  - 边界决定：新一句无 text（旧 voice-mini 或空白文本）立即清掉旧句，避免来源错配；连续空闲轮询不延长保留期，恰好 1.5 秒消失。voice-mini 的 assistant narration 路径已 scrub，字幕直接复用实际队列原文；`/test`、工具等既有路径并非全部 scrub，保持其现有播报行为，不额外修改或二次 scrub，仅透传实际播放文字。贾维斯内置路径沿用现有异步返回行为，静音/合成失败不发字幕，旧播放结束不能清除较新字幕。
+  - 验证：三段式新增插件 19 项、Swift 11 项；插件 **447/447**、Swift **233/233**、两仓 `npm run build`、`macos/build.sh`、`git diff --check` 全过。voice-mini speech **46/46**（含新增 5 项）、Jarvis voice 双语言 **2/2**、pause **8/8**、queue-clear **7/7**、`npm test` 全过；关键字幕与路由回归已确认基线红灯、修改后绿灯。快照实际生成并用图像工具打开确认：[16-caption-jarvis.png](../evidence/2026-09-24-u1-captions/16-caption-jarvis.png)、[17-caption-session.png](../evidence/2026-09-24-u1-captions/17-caption-session.png)。
+  - 两仓均在独立 `codex/u1-captions` worktree 实现，voice-mini 单独英文提交；本仓表格标签 `u1-captions-20260924` 定位单提交（整合后由主会话打标签）。由主会话 review / 串行合入后重建并重启面板；需用户重启 DSH 加载两插件并运行 `npm run smoke`，人工检查真实播放、输入开启、字幕开关及系统减少动态效果。旧 voice-mini 脚本测试曾覆盖 runtime 发现文件，主会话已恢复当前 origin/pid/rendererHeader 并保留 token；确认 NO_PERSIST 阻止配置写入，后续测试显式隔离 runtime/config 路径。
 
 ### U2 目标列表显示任务进度
 

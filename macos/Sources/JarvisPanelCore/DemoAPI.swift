@@ -84,8 +84,8 @@ public actor DemoAPI: JarvisAPI {
     }
     let voice: VoiceState
     switch scene {
-    case .speaking: voice = VoiceState(speaking: true, source: .jarvis, muted: muted, queued: 2)
-    case .narrating: voice = VoiceState(speaking: true, source: .session, sessionId: "demo-docs", muted: muted)
+    case .speaking: voice = VoiceState(speaking: true, source: .jarvis, text: "先生，测试已经全部通过，部署文档也已更新。", muted: muted, queued: 2)
+    case .narrating: voice = VoiceState(speaking: true, source: .session, sessionId: "demo-docs", text: "文档已更新，包含安装步骤、配置说明和常见问题。", muted: muted)
     default: voice = VoiceState(muted: muted)
     }
     return Snapshot(

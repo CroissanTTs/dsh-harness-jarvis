@@ -123,7 +123,8 @@ final class AppController: NSObject {
       toastWork = work
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
-    if hoverActive { layout() }
+    if hoverActive || model.caption != nil { layout() }
+    updateOverlayPresence()
     updateVisibility()
   }
 
@@ -180,6 +181,12 @@ final class AppController: NSObject {
     let quick = Placement.quickBar(center: center, visible: visible,
                                    barSize: CGSize(width: QuickBarView.width, height: QuickBarView.baseHeight))
 
+    // Reserve a passive subtitle surface beyond the hover controls, clamped to the screen.
+    let captionX = quick.side == .left ? quick.bar.minX - 42 : quick.bar.minX + 42
+    let captionFrame = CGRect(x: min(max(captionX, visible.minX + 4), visible.maxX - 324),
+                              y: min(max(center.y - 28, visible.minY + 4), visible.maxY - 60),
+                              width: 320, height: 56)
+    overlayState.captionFrame = captionFrame
     var area = CGRect(x: center.x - 70, y: center.y - 70, width: 140, height: 140)
     for b in hover.buttons { area = area.union(CGRect(x: b.x - 110, y: b.y - 30, width: 220, height: 60)) }
     switch hover.readout {
@@ -189,6 +196,7 @@ final class AppController: NSObject {
     let stackTop = quick.growsUp ? quick.bar.maxY + quick.stackLimit : quick.bar.maxY
     let stackBottom = quick.growsUp ? quick.bar.minY : quick.bar.minY - quick.stackLimit
     area = area.union(CGRect(x: quick.bar.minX, y: stackBottom, width: quick.bar.width, height: stackTop - stackBottom))
+    area = area.union(captionFrame)
     area = area.insetBy(dx: -16, dy: -16).integral
 
     if overlayState.frame != area {
@@ -507,7 +515,7 @@ final class AppController: NSObject {
   private func updateOverlayPresence() {
     overlayHideWork?.cancel()
     overlayHideWork = nil
-    let needed = !hidden && (hoverActive || model.quickBarOpen || overlayState.toast != nil)
+    let needed = !hidden && (hoverActive || model.quickBarOpen || overlayState.toast != nil || model.caption != nil)
     if needed {
       if !overlay.isVisible { overlay.orderFrontRegardless() }
     } else if overlay.isVisible {
@@ -525,6 +533,8 @@ final class AppController: NSObject {
 
   private func applySettings() {
     let s = store.settings
+    model.refreshCaptions()
+    updateOverlayPresence()
     orb.setMissionControlHidden(s.hideInMissionControl)
     overlay.setMissionControlHidden(s.hideInMissionControl)
     orb.orbView.setCount(s.tier.count)
@@ -536,6 +546,7 @@ final class AppController: NSObject {
 
   private func applyReduceMotion() {
     orb.orbView.setReduceMotion(store.settings.followReduceMotion && observer.reduceMotion)
+    overlayState.reduceCaptionMotion = observer.reduceMotion
   }
 
   private func showMenu(_ event: NSEvent) {

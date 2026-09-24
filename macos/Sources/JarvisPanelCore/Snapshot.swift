@@ -54,6 +54,17 @@ public struct Counts: Decodable, Sendable, Equatable {
   private enum CodingKeys: String, CodingKey { case running, pending, unread, failed }
 }
 
+/// Who announces a managed session's results.
+public enum Narration: String, Sendable, Equatable {
+  /// The session speaks for itself through voice-mini (host value `self`).
+  case session = "self"
+  /// Jarvis retells the result in its own voice.
+  case relay
+
+  public var toggled: Narration { self == .session ? .relay : .session }
+  public var label: String { self == .session ? "自己汇报" : "贾维斯转述" }
+}
+
 public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
   public var id: String
   public var title: String
@@ -63,16 +74,19 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
   public var workspace: String?
   /// Handed to Jarvis: only these are send targets. Older hosts list no others, so absent means true.
   public var managed: Bool
+  /// Effective narration; hosts before narration modes send none.
+  public var narration: Narration?
   public var task: TaskInfo?
 
   public init(id: String, title: String, status: SessionStatus, unread: Bool,
-              workspace: String? = nil, managed: Bool = true, task: TaskInfo? = nil) {
+              workspace: String? = nil, managed: Bool = true, narration: Narration? = nil, task: TaskInfo? = nil) {
     self.id = id
     self.title = title
     self.status = status
     self.unread = unread
     self.workspace = workspace
     self.managed = managed
+    self.narration = narration
     self.task = task
   }
 
@@ -85,6 +99,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     let ws = ((try? c.decodeIfPresent(String.self, forKey: .workspace)) ?? nil)?.trimmingCharacters(in: .whitespaces)
     workspace = (ws?.isEmpty ?? true) ? nil : ws
     managed = ((try? c.decodeIfPresent(Bool.self, forKey: .managed)) ?? nil) ?? true
+    narration = ((try? c.decodeIfPresent(String.self, forKey: .narration)) ?? nil).flatMap(Narration.init(rawValue:))
     task = try? c.decodeIfPresent(TaskInfo.self, forKey: .task)
   }
 
@@ -97,7 +112,7 @@ public struct SessionInfo: Decodable, Sendable, Equatable, Identifiable {
     return t.isEmpty ? String(id.suffix(8)) : t
   }
 
-  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace, managed, task }
+  private enum CodingKeys: String, CodingKey { case id, title, status, unread, workspace, managed, narration, task }
 }
 
 public enum PendingKind: String, Sendable, Equatable {

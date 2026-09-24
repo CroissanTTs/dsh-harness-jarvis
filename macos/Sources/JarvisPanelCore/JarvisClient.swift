@@ -66,6 +66,10 @@ public final class JarvisClient: JarvisAPI, @unchecked Sendable {
     _ = try await request("POST", "/jarvis/managed", body: ["session": session, "managed": managed])
   }
 
+  public func setNarration(session: String, narration: Narration?) async throws {
+    _ = try await request("POST", "/jarvis/narration", body: ["session": session, "narration": narration?.rawValue ?? NSNull()])
+  }
+
   public func send(text: String, target: String?) async throws {
     var body: [String: Any] = ["text": text]
     if let target { body["session"] = target }

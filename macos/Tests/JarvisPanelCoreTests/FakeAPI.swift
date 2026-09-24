@@ -86,6 +86,16 @@ actor FakeAPI: JarvisAPI {
     if let managedError { throw managedError }
   }
 
+  private(set) var narrationCalls: [(session: String, narration: Narration?)] = []
+  var narrationError: JarvisAPIError?
+  func setNarrationError(_ e: JarvisAPIError?) { narrationError = e }
+
+  func setNarration(session: String, narration: Narration?) async throws {
+    narrationCalls.append((session, narration))
+    if managedDelay > 0 { try? await Task.sleep(for: .seconds(managedDelay)) }
+    if let narrationError { throw narrationError }
+  }
+
   func send(text: String, target: String?) async throws {
     if let sendError { throw sendError }
     sent.append((text, target))

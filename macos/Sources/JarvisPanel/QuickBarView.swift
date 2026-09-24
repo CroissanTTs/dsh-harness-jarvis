@@ -182,6 +182,16 @@ struct TargetListView: View {
               .fixedSize()
               .help(task.summary ?? "")
           }
+          if option.narration == .relay {
+            Text("转述")
+              .font(.system(size: 9, weight: .medium))
+              .foregroundStyle(Theme.cyan.opacity(0.8))
+              .padding(.horizontal, 4)
+              .padding(.vertical, 2)
+              .background(Capsule().fill(Theme.cyan.opacity(0.10)))
+              .fixedSize()
+              .help("结果由贾维斯转述播报")
+          }
           if option.target == .jarvis {
             Text("直接对话").font(.system(size: 10)).foregroundStyle(Theme.faint)
           }
@@ -196,6 +206,20 @@ struct TargetListView: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      if let id = option.target.sessionID, hovered == option.id, let narration = option.narration {
+        Button {
+          Task { await model.toggleNarration(id) }
+        } label: {
+          Image(systemName: narration == .relay ? "quote.bubble" : "speaker.wave.2")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(narration == .relay ? Theme.cyan : Theme.dim)
+            .frame(width: 22, height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("播报：\(narration.label)。点按改为\(narration.toggled.label)")
+        .disabled(model.managingID != nil)
+      }
       if let id = option.target.sessionID, hovered == option.id {
         Button {
           Task { await model.setManaged(id, false) }

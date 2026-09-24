@@ -40,11 +40,12 @@ public actor DemoAPI: JarvisAPI {
   private let sessions = [
     SessionInfo(id: "demo-hammer", title: "贾维斯-hammer", status: .running, unread: false, workspace: "hammer"),
     SessionInfo(id: "demo-anvil", title: "贾维斯-anvil", status: .waiting, unread: false, workspace: "anvil"),
-    SessionInfo(id: "demo-docs", title: "贾维斯-docs", status: .done, unread: true, workspace: "docs"),
+    SessionInfo(id: "demo-docs", title: "贾维斯-docs", status: .done, unread: true, workspace: "docs", narration: .relay),
     SessionInfo(id: "demo-quant", title: "量化回测", status: .idle, unread: false, workspace: "Quant", managed: false),
     SessionInfo(id: "demo-dev", title: "贾维斯", status: .idle, unread: false, workspace: "dsh-plugin-discovery", managed: false),
   ]
   private var managedOverride: [String: Bool] = [:]
+  private var narrationOverride: [String: Narration] = [:]
 
   private let demoPending = [
     PendingItem(id: "demo-p1", kind: .approval, session: "demo-hammer", title: "请求执行",
@@ -93,6 +94,11 @@ public actor DemoAPI: JarvisAPI {
       return s
     }
     if read { list = list.map { var s = $0; s.unread = false; return s } }
+    list = list.map { s in
+      var s = s
+      s.narration = s.managed ? narrationOverride[s.id] ?? s.narration ?? .session : nil
+      return s
+    }
     if scene == .failed { list[0].status = .failed }
     if scene == .taskStates {
       list[0].title = "修复回归测试并检查工作区的全部构建结果"
@@ -129,6 +135,14 @@ public actor DemoAPI: JarvisAPI {
   public func setManaged(session: String, managed: Bool) async throws {
     guard sessions.contains(where: { $0.id == session }) else { throw JarvisAPIError.http(404) }
     managedOverride[session] = managed
+    if !managed { narrationOverride[session] = nil }
+  }
+
+  public func setNarration(session: String, narration: Narration?) async throws {
+    guard let s = sessions.first(where: { $0.id == session }), managedOverride[session] ?? s.managed else {
+      throw JarvisAPIError.http(404)
+    }
+    narrationOverride[session] = narration
   }
 
   public func messages(session: String?) async throws -> [ChatMessage] {

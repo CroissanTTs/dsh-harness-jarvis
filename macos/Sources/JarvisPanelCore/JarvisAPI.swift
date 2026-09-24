@@ -40,6 +40,8 @@ public protocol JarvisAPI: Sendable {
   func messages(session: String?) async throws -> [ChatMessage]
   /// Hands a session to Jarvis (`managed == true`) or takes it back.
   func setManaged(session: String, managed: Bool) async throws
+  /// Overrides a managed session's narration; nil restores the host default.
+  func setNarration(session: String, narration: Narration?) async throws
   func send(text: String, target: String?) async throws
   func approvalRules() async throws -> [ApprovalRule]
   func removeApprovalRule(_ identity: ApprovalRule.Identity) async throws

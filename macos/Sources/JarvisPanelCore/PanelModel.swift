@@ -24,6 +24,7 @@ public struct TargetOption: Identifiable, Equatable, Sendable {
   public var label: String
   public var status: SessionStatus?
   public var task: TaskInfo? = nil
+  public var narration: Narration? = nil
 }
 
 public enum Connection: Equatable, Sendable {
@@ -146,7 +147,7 @@ public final class PanelModel: ObservableObject {
   }
 
   private func option(_ s: SessionInfo) -> TargetOption {
-    TargetOption(target: .session(s.id), label: displayName(s), status: s.status, task: s.task)
+    TargetOption(target: .session(s.id), label: displayName(s), status: s.status, task: s.task, narration: s.narration)
   }
 
   /// A session named like Jarvis itself, or like another session, gets its
@@ -335,6 +336,23 @@ public final class PanelModel: ObservableObject {
       return
     }
     if !on, target == .session(session) { target = .jarvis }
+    await refresh()
+  }
+
+  /// Flips who announces `session`'s results. Shares the managed-set guard so
+  /// only one host change is in flight.
+  public func toggleNarration(_ session: String) async {
+    guard managingID == nil,
+          let current = snapshot?.sessions.first(where: { $0.id == session && $0.managed })?.narration else { return }
+    managingID = session
+    defer { managingID = nil }
+    do {
+      try await api.setNarration(session: session, narration: current.toggled)
+      sendError = nil
+    } catch {
+      sendError = "切换播报失败：" + Self.describe(error)
+      return
+    }
     await refresh()
   }
 

@@ -136,6 +136,17 @@ async function state(): Promise<any> {
   } finally { fetch.mock.restore(); }
 }
 
+async function sessions(authorized = true): Promise<{ code: number; body: any }> {
+  const token = JSON.parse(readFileSync(join(dir, 'runtime.json'), 'utf8')).token;
+  let code = 0;
+  let body = '';
+  await handler({ url: '/jarvis/sessions', method: 'GET', socket: { remoteAddress: '127.0.0.1' },
+    headers: authorized ? { authorization: `Bearer ${token}` } : {} }, {
+    writeHead: (status: number) => { code = status; }, end: (text: string) => { body = text; },
+  });
+  return { code, body: JSON.parse(body) };
+}
+
 function event(session: string, type: string, kind?: string): void {
   for (const listener of listeners.get('session/event') ?? []) {
     listener({ id: session }, { type, ...(kind ? { data: { reason: { kind } } } : {}) });
@@ -166,6 +177,14 @@ function delayedVerdict(): () => void {
 }
 
 describe('等价类', () => {
+  it('sessions只返回托管集合，纳入和移出后即时更新', async () => {
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: ['a', 'b'] } });
+    await tools.get('release_session').execute({ session: 'b' });
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: ['a'] } });
+    await tools.get('manage_session').execute({ session: 'b' });
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: ['a', 'b'] } });
+  });
+
   it('state实时显示open、judging、unsatisfied并优先显示缺少项', async () => {
     const row = async () => (await state()).sessions.find((s: any) => s.id === 'a');
     assert.equal('task' in await row(), false);
@@ -331,6 +350,19 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('空托管集合仍返回managed空数组且不带旧monitoring字段', async () => {
+    for (const session of ['a', 'b']) await tools.get('release_session').execute({ session });
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: [] } });
+  });
+
+  it('任务开始和结束不改变sessions的托管集合响应', async () => {
+    await tools.get('inject_to_session').execute({ session: 'a', message: '执行任务' });
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: ['a', 'b'] } });
+    event('a', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'done');
+    assert.deepEqual(await sessions(), { code: 200, body: { managed: ['a', 'b'] } });
+  });
+
   it('state省略done与dropped任务并保留正常会话状态', async () => {
     for (const session of ['a', 'b']) await tools.get('inject_to_session').execute({ session, message: '任务' });
     event('a', 'turn/end', 'completed');
@@ -434,6 +466,10 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  it('未授权请求不能读取sessions托管集合', async () => {
+    assert.deepEqual(await sessions(false), { code: 403, body: { error: 'forbidden' } });
+  });
+
   it('state忽略刚过期任务并且不通过current隐式写台账', async () => {
     let now = Date.now();
     mock.method(Date, 'now', () => now);

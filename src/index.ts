@@ -1,30 +1,15 @@
 /**
- * dsh-harness-jarvis — SCAFFOLD (v0.1.0-scaffold).
+ * DSH wiring for the Jarvis commander and its independent worker sessions.
  *
- * Jarvis commander plugin for DeepSeek Harness. Per SPEC v0.9
- * (dsh-harness-jarvis/SPEC.md). This file is a SKELETON: it wires the two
- * 挂点 (§3.1) and registers the tool surfaces (§7) + global listeners, but
- * execute bodies / TTS / answerer / memory / 悬浮窗 routes are STUBS
- * (throw TODO) to be filled in during implementation.
+ * apply() connects the task ledger, turn/end completion judge, output
+ * coordinator, approval records, TTS and optional native-panel HTTP routes.
+ * createAgent/resume setup scopes the commander persona and tools to Jarvis;
+ * workers keep their own prompts and transcripts. Continuation waits for the
+ * user's answer after turn/end, then Jarvis delivers a new UserMessage.
  *
- * Architecture (§3.2): a 瘦编排 agent (one Jarvis session, lean) managing N
- * independent clean worker sessions; routing = 悬浮窗 explicit session select
- * + text input (no STT in MVP, §6); completion judge / 续轮 happen on worker
- * turns via global listeners filtered to the managed set (§8/§13).
- *
- * Two 挂点 (§3.1):
- *   挂点1 (global, in apply)   — session/event + agent/turn-stopping listeners
- *                                (filtered to managed workers), approval answerer
- *                                stub, built-in TTS, lock + .jarvis state,
- *                                optional webServer routes.
- *   挂点2 (in createAgent setup, via agentCtx) — commander persona section +
- *                                贾维斯 tools (§7), all scoped to the Jarvis
- *                                agent so workers never see them.
- *
- * Jarvis agent creation: the plugin calls ctx.agentLoop.createAgent() itself
- * (with a setup callback that does 挂点2), NOT relying on cordis.yml config
- * declaration or GUI naming — sidesteps the "agent-loop config id" and
- * "can't name a session 'jarvis'" issues.
+ * General memory tools, settings UI and automatic question answering remain
+ * backlog work; approval records already persist independently of those tools.
+ * Pure logic lives in sibling modules so it can be tested without DSH.
  *
  * @module dsh-harness-jarvis
  */
@@ -419,6 +404,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   //    the Jarvis panel section). Contract: who we are + our session id
   //    (voice-mini singles out Jarvis's session for narration), and speech():
   //    voice-mini reports every line it plays so the orb talks in step with it.
+  //    claimsTurnEnd() identifies worker completions narrated by Jarvis instead.
   ctx.provide('jarvis' as any, {
     sessionId: entry.jarvisSessionId,
     cwd: resolveDir(entry.jarvisCwd),
@@ -577,7 +563,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             const ms = await (llm as any).listModels(p);
             sendJson(res, 200, { provider: p, models: ms.map((m: any) => ({ id: m.id, name: m.name ?? m.id })) }); return;
           }
-          if (url === '/sessions' && req.method === 'GET') { sendJson(res, 200, { managed: managed.list(), monitoring: [] }); return; }
+          if (url === '/sessions' && req.method === 'GET') { sendJson(res, 200, { managed: managed.list() }); return; }
           if (url === '/managed' && req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}');
             const session = typeof body.session === 'string' ? body.session.trim() : '';
@@ -791,10 +777,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           debug(entry, 'turn/end judge failed: ' + (error instanceof Error ? error.message : String(error))));
         break;
       case 'approval/asked':
-        // TODO §11: relay approval to user
+        // Approval relay is handled by approval/request below.
         break;
       case 'ask_user_question':
-        // TODO §8: intercept / escalate
+        // Question relay is handled by user-questions/request below; auto-answering is backlog J7.
         break;
     }
   });

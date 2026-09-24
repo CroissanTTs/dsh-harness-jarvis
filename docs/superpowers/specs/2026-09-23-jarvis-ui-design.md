@@ -1,7 +1,7 @@
 # 贾维斯悬浮窗 UI 设计（v1）
 
-> 日期：2026-09-23 · 状态：待用户审阅
-> 范围：`macos/` 原生悬浮窗的全部 UI，以及 UI 需要的 host 数据接口。功能调优（真实托管、审批 relay、口播控制的后端实现）在此基础上另做。
+> 日期：2026-09-23 · 实现同步：2026-09-24（阶段 2）
+> 范围：`macos/` 原生悬浮窗的全部 UI，以及 UI 需要的 host 数据接口。托管、审批 relay、口播控制及任务进度已接通；后续功能状态以 backlog 为准。
 > 参考交互稿：`.superpowers/brainstorm/82021-1790147640/content/`（`states-v5.html` 形象动效、`dock.html` 贴边、`hover.html` / `badge.html` / `space.html` Hover 与角标、`mini.html` 快速回复）。
 
 ## 1. 目标与原则
@@ -128,8 +128,10 @@
 ### 6.1 输入条
 
 - 结构：`[发送目标 ▾] 输入框 [⌃ 展开对话] [发送]`。
-- 发送目标：第一项"贾维斯"是直接和贾维斯对话，不转发；其余是托管会话，名字前的圆点表示状态（运行中青、等你回答琥珀、已完成白、空闲灰）。
-- 默认目标是上次用过的目标。点目标或按 Tab 打开列表切换，⌘1–⌘9 直接选。满足 SPEC §12 的"显式选择、不自动路由"。
+- 发送目标：第一项“贾维斯”是直接对话、不转发；其余**只列托管会话**，保留会话标题，名字前圆点表示会话运行态。底部“＋ 交给贾维斯…”展开未托管候选，选择后纳入托管；托管行悬停出现“移出”按钮。
+- 标题右侧另显示任务徽标：`open` → “进行中”、`judging` → “判断中”、`unsatisfied` → “未完成”（琥珀色）。无任务、已结或过期任务不显示；徽标不被压缩，长标题截断时仍保留徽标和快捷键。
+- 徽标悬停显示 summary：优先使用判断的缺少项，否则是用户原话前 30 个 Unicode 字符。任务进度与会话运行态、未读/失败角标分别表达，不混用。
+- 默认目标是上次用过的目标，失效时回退“贾维斯”。点目标或按 Tab 打开列表切换，⌘1–⌘9 直接选。按显式目标发送，不自动猜测目标。
 - 回车发送，Shift+回车换行（最多 3 行）；Esc 关闭。
 - 发送后输入条收起，形象旁显示"已发给 hammer"，1.5s 后消失；形象进入等待消息状态。发送失败时输入条不收起，保留文字，目标标签下显示一行红色错误。
 - 点击输入条以外的地方也会关闭；未发送的文字保留到下次打开。
@@ -137,7 +139,7 @@
 ### 6.2 待处理卡片
 
 - 有审批或提问时，卡片按时间顺序堆在输入条上方（最多显示 3 张，其余折叠为"还有 N 件"）。
-- 审批卡：`会话名 · 请求执行`、命令（等宽字体）、`批准` / `拒绝`。有贾维斯的解释时追加一行。
+- 审批卡：`会话名 · 请求执行`、命令（等宽字体，host 展示最多 300 字符）、`批准` / `拒绝`。DSH 原窗口同时可答，先答者生效；审批结果先返回，随后异步写 HTML 记录，写失败不影响用户决定。
 - 提问卡：`会话名 · 问题`、选项按钮、`我来回答`。
 - 点选项直接提交；卡片右上角 ↗ 回到 DSH 查看完整上下文。
 - 点"我来回答"时，输入条目标切到该会话，并标记为"回答中"，发送内容作为答复提交。
@@ -146,7 +148,7 @@
 ### 6.3 对话展开
 
 - 点 ⌃（或 Hover 的"对话记录"按钮）后，对话记录按 §6 开头的方向展开，最高 360pt，超出滚动，远离输入条的一端渐隐，没有标题和边框。
-- 显示最近 20 条：我的消息靠右，贾维斯的靠左。贾维斯转发给会话的内容，在气泡底部标一行 `→ hammer：…`，不单独成行。
+- 记录随发送目标切换：选“贾维斯”读取它的对话，选 worker 读取该会话的对话。我的消息靠右，助手消息靠左；若有 routedTo，在气泡底部标一行 `→ hammer：…`。host 默认保留最近 20 条会话气泡，客户端显示最近 20 条。
 - 工具调用不逐条显示。
 - 展开状态会被记住，下次打开沿用。
 
@@ -175,34 +177,52 @@
 
 ## 8. Host 数据接口
 
-UI 需要的数据以一个快照接口提供。本版 host 能拿到的真实数据照实返回（`speaking`、消息、会话列表），暂时拿不到的返回空数组或 0，由后续功能调优补上。`activity` 为 `idle` 且输入条打开时，客户端本地显示为等待消息。
+所有路由须通过 loopback 与 token 校验（不满足返回 403）；面板发送 bearer，host 当前也兼容 query token（SEC1 尚未收紧）。Desktop 还需 runtime.json 中的 rendererHeader（若有）。面板每次请求重读 runtime.json，宿主重启换端口/token 后可重新连接。
 
-`GET /jarvis/state`（扩展现有字段，旧字段保留）：
+`GET /jarvis/state` 返回实时快照，以下为字段示意（`|` 表示可选值）：
 
 ```json
 {
   "agentId": "…",
+  "managed": ["…"],
+  "speaking": false,
   "activity": "idle | awaiting | thinking | speaking",
   "error": null,
-  "voice": { "speaking": false, "muted": false },
+  "voice": {
+    "speaking": false, "muted": false,
+    "source": "jarvis | session", "sessionId": "…",
+    "paused": false, "queued": 0
+  },
   "counts": { "running": 2, "pending": 1, "unread": 1, "failed": 0 },
-  "sessions": [{ "id": "…", "title": "贾维斯-hammer", "status": "running | waiting | done | failed | idle", "unread": false }],
+  "sessions": [{
+    "id": "…", "title": "hammer", "workspace": "project-name", "managed": true,
+    "status": "running | waiting | done | failed | idle", "unread": false,
+    "task": { "status": "open | judging | unsatisfied", "summary": "补齐回归测试" }
+  }],
   "pending": [{ "id": "…", "kind": "approval | question", "session": "…", "title": "…", "detail": "rm -rf node_modules", "note": "…", "choices": ["保留旧表", "直接替换"] }]
 }
 ```
 
-新增：
+- `sessions` 包含所有可见、未归档 worker，排除 Jarvis 自己；`managed` 区分托管目标与候选。`workspace` 是 cwd 的目录名，缺失时省略。标题不强制添加“贾维斯-”前缀。
+- `task` 仅包含未结且未过期任务；`summary` 可省略。面板兼容无 task 的旧快照，遇到未知 status、非对象 task 或非字符串 summary 时忽略该 task，不影响其他会话数据。
+- `counts.running/unread/failed` 只统计托管 worker；pending 为当前全部待答项数量。`session.status` 表示运行/结果态，独立于 `task.status`。
+- `voice.source/sessionId` 按当前口播信号可选返回；`paused/queued` 是 voice-mini 的暂停/排队状态。`activity=idle` 且输入条打开时客户端本地显示等待消息。
 
-| 路由 | 请求体 | 用途 |
+| 路由 | 参数 / 请求体 | 响应与用途 |
 |---|---|---|
-| `POST /jarvis/pending/answer` | `{ id, decision?: "allow" \| "deny", choice?: string, text?: string }` | 审批 / 回答提问 |
-| `POST /jarvis/voice` | `{ action: "pause" \| "mute" \| "unmute" }` | 声音按钮 |
-| `POST /jarvis/read` | `{ session? }` | 清除未读 |
-| `POST /jarvis/open` | `{ session }` | 在 DSH 中打开该会话（至少把 DSH 切到前台） |
+| `GET /jarvis/sessions` | 无 | `{managed:[id]}`；无旧 monitoring 字段，面板使用 state 而不读此接口 |
+| `GET /jarvis/wait` | `?since=<version>&timeout=<毫秒>` | `{version}`；版本变化即返回，否则等到超时（默认 1000ms，上限 25000ms） |
+| `POST /jarvis/managed` | `{session, managed: boolean}` | `{managed:[id]}`；纳入或移出，纳入不存在/不可见目标返回 404，缺少参数返回 400；移出终止任务并清理旧续做问题 |
+| `GET /jarvis/messages` | `?session=<worker-id>` 可选 | 默认 Jarvis 对话；指定 id 读取可见 worker，未知目标 404；正常返回 `{messages:[…], count}`，会话尚不可用时返回 `{messages:[], error:"no session"}` |
+| `POST /jarvis/input` | `{text, session?}` | `{ok:true}`；不传 session 为直接对话，传 session 为指定目标转发；空输入 400、Jarvis 未就绪 503 |
+| `POST /jarvis/pending/answer` | `{id, decision?: "allow" \| "deny", choice?: string, text?: string}` | 成功 204；答案非法 400，已失效/不存在 404 |
+| `POST /jarvis/voice` | `{action: "pause" \| "resume" \| "skip" \| "clear" \| "mute" \| "unmute"}` | 成功 204，未知动作 400；静音/取消静音与 voice-mini 队列控制 |
+| `POST /jarvis/read` | `{session?}` | 204；清除指定会话或全部未读与失败标记 |
+| `POST /jarvis/open` | `{session}` | 204；当前把 DSH 切到前台，尚不保证定位指定会话 |
 
-`GET /jarvis/messages` 每条增加稳定的 `id` 和可选的 `routedTo`（会话 id）。现在用 role+text 当 id，会重复。
+消息有稳定 `id`、`role`、`text` 和可选 `routedTo`（会话 id）、`toolCalls`，UI 仅渲染文字与转发标记。选择目标后同时切换消息查询；慢请求不得覆盖新目标的记录。
 
-轮询：形象可见时每 1s 一次，隐藏时每 5s 一次。推送（SSE）留给功能调优。
+刷新循环：获取快照/消息后调用 `/jarvis/wait`，可见时等待 1 秒、隐藏时 5 秒；变化提前唤醒，到时也会重新读取快照（任务台账变化不要求每次推进版本）。断线时按相同间隔重试。已实现 HTTP 长轮询，SSE 尚未采用。
 
 **演示模式**：设置环境变量 `JARVIS_DEMO=1` 启动时，客户端不连 host，用内置假数据循环播放所有状态、角标、卡片，用于 UI 验收和截图。
 
@@ -235,7 +255,8 @@ UI 需要的数据以一个快照接口提供。本版 host 能拿到的真实�
 - **ViewModel（`PanelModel`）按"等价类 + 边界值 + 异常路径"三段式**：
   - 等价类：发给贾维斯 / 发给会话；审批批准 / 拒绝；选项回答 / 文字回答；静音 / 暂停口播。
   - 边界值：空白输入不发送；多行文本原样发送；0 个托管会话时目标列表只剩"贾维斯"；上次目标已不在托管集时回退到"贾维斯"；待处理 0 / 3 / 4 张（折叠）；⌘9 超出列表长度。
-  - 异常路径：host 未运行（无 runtime.json）、HTTP 401/500、超时、发送失败保留文字、回答已失效的待处理项、快照字段缺失（旧 host）。
+  - 异常路径：host 未运行（无 runtime.json）、HTTP 403/500、超时、发送失败保留文字、回答已失效的待处理项、快照字段缺失（旧 host）。
+- U2 任务进度：等价类覆盖三种标签与缺少项摘要；边界覆盖无任务、已结、30 字摘要和长标题；异常覆盖未知状态与损坏 task。快照 `18-targets-task-state` 已留存于 `docs/superpowers/evidence/2026-09-24-u2-task-state/18-targets-task-state.png`，验证徽标、长标题截断及快捷键。
 - `OrbStateResolver`：优先级与颜色组合的全表测试。
 - `Placement`：中间 / 四边 / 四角 / 菜单栏 / Dock / 刘海 / 多显示器，断言所有元素落在可见区域内且互不重叠。
 - `ParticleSim`：固定种子下非待机状态核心圆内粒子数为 0；收敛后所有粒子落在目标区域内；档位切换数量正确。
@@ -255,6 +276,6 @@ UI 需要的数据以一个快照接口提供。本版 host 能拿到的真实�
 ## 12. 不在本版范围
 
 - 语音输入（STT）。
-- 事件推送（SSE），本版用轮询。
-- host 端托管、审批 relay、口播暂停的真实实现（本版只定义接口，返回可得数据）。
+- 事件推送（SSE），当前使用 HTTP 长轮询。
+- 播报字幕（U1）、自动答疑（J7）和分级自动审批（P1）；已有托管、审批 relay 和口播控制均使用真实 host 接口。
 - 预渲染动图备选方案（实时渲染已满足性能预算）。

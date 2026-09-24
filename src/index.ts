@@ -7,8 +7,8 @@
  * workers keep their own prompts and transcripts. Continuation waits for the
  * user's answer after turn/end, then Jarvis delivers a new UserMessage.
  *
- * Explicit memory tools and filtered temp capture use scoped stores; settings UI
- * and automatic question answering remain backlog work.
+ * Explicit memory tools and filtered temp capture use scoped stores; optional
+ * DSH settings update runtime preferences. Automatic question answering remains backlog work.
  * Pure logic lives in sibling modules so it can be tested without DSH.
  *
  * @module dsh-harness-jarvis
@@ -35,6 +35,7 @@ import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
 import { MemoryStore } from './memory/store.ts';
 import { MemorySection } from './memory/section.ts';
+import { mergeSettings, SETTINGS_LIMITS } from './settings.ts';
 import { captureTemp, type CaptureSession } from './memory/capture.ts';
 import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
@@ -157,6 +158,21 @@ export const Config = z.object({
   greetings: z.array(z.string()).default([]),
 });
 
+/** The settings page intentionally omits composition-owned paths and identity. */
+export const SettingsSchema = z.object({
+  provider: Config.dict!.provider.description('贾维斯模型提供方；重启 DSH 生效。'),
+  model: Config.dict!.model.description('贾维斯模型；重启 DSH 生效。'),
+  edgeVoice: Config.dict!.edgeVoice.description('内置语音音色（voice-mini 不可用时）；下一次播报生效。'),
+  greetings: Config.dict!.greetings.description('附加欢迎语；重启欢迎时随机选用。'),
+  judgeEnabled: Config.dict!.judgeEnabled.description('启用任务完成判断；下一次判断生效。'),
+  judgeProvider: Config.dict!.judgeProvider.description('判断模型提供方；留空使用当前贾维斯提供方。'),
+  judgeModel: Config.dict!.judgeModel.description('判断模型；留空使用当前贾维斯模型。'),
+  judgeTimeoutMs: Config.dict!.judgeTimeoutMs.min(SETTINGS_LIMITS.minTimeout).max(SETTINGS_LIMITS.maxTimeout).step(1)
+    .description('判断超时（毫秒，1000–120000）；下一次判断生效。'),
+  maxContinueRounds: Config.dict!.maxContinueRounds.min(0).max(SETTINGS_LIMITS.maxRounds).step(1)
+    .description('最多续做次数（0–10）；0 表示不再询问续做。'),
+}).description('贾维斯');
+
 interface JarvisConfig {
   locale: string;
   audioDir: string;
@@ -229,14 +245,14 @@ type SpeakResult = 'voice-mini' | 'built-in' | 'muted' | 'failed';
 /** Built-in TTS: edge-tts (free Microsoft neural voices) synthesized in a
  *  child process (the WebSocket flakes ~50% in the Electron main process but is
  *  100% reliable in plain Node), then played via macOS `afplay`. No LLM. */
-function makeBuiltInTTS(voice: string) {
+function makeBuiltInTTS(voice: () => string) {
   const synthScript = join(pkgRoot, 'scripts', 'synth-edge.mjs');
   return {
     id: 'edge',
     async synthesize(text: string, outFile: string): Promise<{ path: string; ms: number }> {
       const t0 = Date.now();
       mkdirSync(dirname(outFile), { recursive: true });
-      const { code, stderr } = await runChild(process.execPath, [synthScript, text, outFile, voice, '+0%']);
+      const { code, stderr } = await runChild(process.execPath, [synthScript, text, outFile, voice(), '+0%']);
       if (code !== 0 || !existsSync(outFile)) {
         throw new Error('edge-tts synth failed (child exit=' + code + (stderr ? ', stderr=' + stderr.slice(0, 200) : '') + ')');
       }
@@ -397,6 +413,7 @@ function createPanelProcess(entry: JarvisConfig, say: JarvisDeps['say']): PanelP
 
 export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   const entry = { ...Config(rawConfig ?? {}), ...(rawConfig as object) } as JarvisConfig;
+  Object.assign(entry, mergeSettings(Config({}) as JarvisConfig, entry));
   debug(entry, 'apply() started');
   const pruneAudio = setTimeout(() => cleanupSpeechCache(resolveDir(entry.audioDir)), 30_000);
   pruneAudio.unref();
@@ -763,8 +780,34 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     });
     debug(entry, 'webServer routes mounted at /jarvis');
   });
-  ctx.inject(['settings' as any], () => {
-    // TODO §2: installSettingsSection
+  const settingsBase = mergeSettings(entry, {});
+  let settingsSource: () => unknown = () => settingsBase;
+  let settingsDisposed = false;
+  let agentModelSelected = false;
+  const refreshSettings = () => {
+    if (settingsDisposed) return;
+    try {
+      const next = mergeSettings(settingsBase, settingsSource());
+      // A live agent and its judge fallback keep the model selected at creation.
+      if (agentModelSelected) { next.provider = entry.provider; next.model = entry.model; }
+      Object.assign(entry, next);
+    } catch (error) { debug(entry, 'settings read failed: ' + String(error)); }
+  };
+  ctx.inject(['settings' as any], (settingsCtx: Context) => {
+    if (settingsDisposed) return;
+    try {
+      const settings = (settingsCtx as any).get?.('settings');
+      if (typeof settings?.installSection !== 'function') return;
+      // installSection owns scope.watch, persistence and fallback when the service detaches.
+      settings.installSection(ctx, 'jarvis', SettingsSchema, settingsBase, {
+        setSource: (source: () => unknown) => { if (!settingsDisposed) settingsSource = source; },
+        onChange: refreshSettings,
+      });
+    } catch (error) {
+      settingsSource = () => settingsBase;
+      refreshSettings();
+      debug(entry, 'settings install failed: ' + String(error));
+    }
   });
   let titleService: any;
   let jarvisReady = false;
@@ -793,6 +836,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
       ctx.logger?.warn?.('dsh-harness-jarvis: agentLoop not found');
       return;
     }
+    agentModelSelected = true;
     debug(entry, 'agentLoop service found, calling createAgent');
     loop.createAgent(ctx, {
       sessionId: entry.jarvisSessionId,
@@ -910,7 +954,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     live.holdAsk(req, next), { prepend: true } as any);
 
   // ── built-in TTS + voice:tts detect (§5) ─────────────────────────────
-  const builtInTts = makeBuiltInTTS(entry.edgeVoice);
+  const builtInTts = makeBuiltInTTS(() => entry.edgeVoice);
   ctx.inject(['voice:tts' as any], () => {
     ctx.logger?.warn?.('dsh-harness-jarvis: external voice:tts detected');
   });
@@ -921,6 +965,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // context is torn down (DSH quits / plugin unloads) — kill the悬浮窗 panel
   // so the orb's lifecycle stays tied to DSH ("和 DSH 作为依赖").
   return () => {
+    settingsDisposed = true;
     clearInterval(pruneTasks);
     clearTimeout(pruneAudio);
     completion.dispose();
@@ -1004,7 +1049,7 @@ async function speakAsJarvis(
   if (voiceMuted) return 'muted';
   if (webOrigin && await speakViaVoiceMini(webOrigin, text, entry)) return 'voice-mini';
   try {
-    const hash = createHash('sha1').update(text).digest('hex').slice(0, 16);
+    const hash = createHash('sha1').update(entry.edgeVoice + '\0' + text).digest('hex').slice(0, 16);
     const outFile = join(resolveDir(entry.audioDir), `say-${hash}.mp3`);
     if (!existsSync(outFile)) await tts.synthesize(text, outFile);
     const id = `built-in-${randomUUID()}`;

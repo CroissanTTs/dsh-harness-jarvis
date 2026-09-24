@@ -65,7 +65,7 @@
 
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
-| J6 | DSH 设置页（`settings.installSection`） | J2 | 中 | 待办 |
+| J6 | DSH 设置页（`settings.installSection`） | J2 | 中 | 已完成（`j6-settings-20260924`） |
 | J7 | 拦截托管会话的提问（低风险自答，默认关） | M2、J6 | 中 | 待办 |
 
 ### 阶段 7：语音输入
@@ -414,7 +414,9 @@
 - 用 `watch` 让 judge 相关字段即时生效；`provider`/`model` 改动只影响下次创建的贾维斯 agent（在设置说明里写明"重启 DSH 生效"）。
 - 没有设置服务时一切照旧（installSection 自带降级）。
 - **测试**：把"配置合并/校验"抽纯函数测三段式（非法 maxContinueRounds 负数、超大值、空 provider 回退默认）。
-- **实现记录**：（空）
+- **实现记录**（Codex J6 / 2026-09-24）：`src/settings.ts` 提供纯配置归并与数值校验；`src/index.ts` 从现有 Config 派生九字段 SettingsSchema，在可选服务注入中调用 `settings.installSection(ctx, 'jarvis', …)`。核对本机 DSH 实现后直接使用其内置 watch、持久化读取与服务卸载回退，不另建监听。初始持久化 provider/model 在 agent 创建前读取；创建开始后锁定当前模型，页面注明重启生效，judge 留空时仍跟随当前 agent。五个 judge 字段下一次判断生效；内置 edgeVoice 下一次播报生效，缓存键加入音色防止复用旧声线。同步 SPEC 与源码状态说明。
+  - 边界决定：字段以实际 Config 为准，补入 judgeTimeoutMs，尚无 askInterception 因而留待 J7；不暴露路径或会话身份。判断超时为 1000–120000 毫秒整数，续做上限为 0–10 整数；非法值回退不可变插件配置，空 provider/model/edgeVoice 也回退。judge 空字段允许清除覆盖，greetings 空数组允许清除附加欢迎语。服务缺失、旧接口、安装异常均继续运行；读取异常保留上次有效值，插件卸载后的回调忽略。服务晚到时即时字段生效，模型待重启；服务卸载时即时字段回退插件配置。音色文案明确仅控制 voice-mini 不可用时的内置语音。
+  - 验证：新增 37 项等价类 / 边界值 / 异常路径测试，覆盖真实 apply 接线、初始与延迟服务、卸载回退、运行中模型稳定、judge 开关/提供方/模型/续轮与超时、音色切换及缓存隔离。插件 **484/484**、面板 **258/258**、`npm run build`、`macos/build.sh`、`git diff --check` 全通过，独立审查无阻断。标签 `j6-settings-20260924` 定位单个实现提交；合入主目录重建后需重启 DSH 并运行 `npm run smoke`，人工验收设置页保存/重启保留、即时判断设置及模型重启生效；面板代码未改，无需单独重启。
 
 ### J7 拦截托管会话的提问（默认关）
 

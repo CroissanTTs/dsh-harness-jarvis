@@ -46,7 +46,7 @@ async function request(path: string, body?: unknown): Promise<any> {
   await pending; return JSON.parse(output || '{}');
 }
 async function say(line: string) {
-  writeFileSync(join(dir, `say-${createHash('sha1').update(line).digest('hex').slice(0, 16)}.mp3`), 'fake');
+  writeFileSync(join(dir, `say-${createHash('sha1').update('zh-CN-YunjianNeural\0' + line).digest('hex').slice(0, 16)}.mp3`), 'fake');
   await toolMap.get('say_to_user').execute({ text: line }); await flush();
 }
 describe('等价类', () => {

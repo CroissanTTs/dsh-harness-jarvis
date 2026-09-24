@@ -1,7 +1,7 @@
 # dsh-harness-jarvis — 设计 Spec
 
 > 状态：H1 全局快捷键输入实现同步 · 2026-09-24
-> 已落地：J0/J1/J2/J3/J4/J5/U1/U2/H1/M1/M2/M3/M6；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取、人设记忆注入和审批记录已落地；播报字幕与全局快捷键输入已接通，DSH 设置页、自动答疑和语音输入尚未实现。
+> 已落地：J0/J1/J2/J3/J4/J5/J6/U1/U2/H1/M1/M2/M3/M6；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取、人设记忆注入和审批记录已落地；播报字幕、全局快捷键输入和 DSH 设置页已接通，自动答疑和语音输入尚未实现。
 > 单一真相源。MVP 砍 STT(悬浮窗文本输入窗口替代);权限面彻底干净(无 danger-full-access)。多对话核心:瘦编排+干净 worker+虚拟交错显示(§3.2);悬浮窗 dsh-notch 基(§12)。待研究:次要(见 §18)。
 
 ---
@@ -41,7 +41,7 @@
 | 可选层 | 在 | 不在 |
 |---|---|---|
 | `ctx.inject(['webServer'])`(dsh-host-webserver) | 挂状态/文字输入/悬浮窗 IPC 路由 | 纯 host 跑 |
-| DSH 设置页（backlog J6） | 尚未实现；当前使用插件配置 | 不影响核心运行 |
+| DSH 设置页（J6） | `settings.installSection` 注册 `jarvis`，内置 watch 读取持久化覆盖 | 服务缺失或安装失败沿用插件配置，服务卸载回退 |
 | `ctx.inject(['sessionTitle'])` | 创建/恢复后固定 Jarvis 标题 | 跳过固定标题，不影响启动 |
 | `desktopBrowserAccess`(dsh-desktop) | 将 rendererHeader 写入 runtime.json 供面板请求 | 不写该可选头 |
 | voice-mini HTTP 接口（见 §5） | 委托语音合成和播放 | 内置 TTS |
@@ -140,7 +140,9 @@ DSH / Cordis 加载插件 → apply()（全局）
 | `error / blocked / max-tokens / interrupted` | 保持 open，立即播报失败原因，不调用判断模型 |
 | 移出托管 / 新轮次 / 新任务 / 插件卸载 | 旧判断和续做答案失效，迟到结果不得覆盖新任务 |
 
-默认 `judgeEnabled=true`、`judgeTimeoutMs=20000`、`maxContinueRounds=2`；模型默认沿用 Jarvis 的 provider/model，可单独配置 judgeProvider/judgeModel。优先请求 `reasoningEffort:'low'`，不支持时去掉后重试。配置尚无 DSH 设置页（backlog J6）。
+默认 `judgeEnabled=true`、`judgeTimeoutMs=20000`、`maxContinueRounds=2`；模型默认沿用 Jarvis 的 provider/model，可单独配置 judgeProvider/judgeModel。优先请求 `reasoningEffort:'low'`，不支持时去掉后重试。
+
+DSH 设置页 `jarvis` 暴露 provider、model、edgeVoice、greetings 与全部五个 judge 字段。judge 字段下一次判断生效；超时为 1000–120000 毫秒整数，续轮上限为 0–10 整数。provider/model 在创建或恢复 agent 前读取已保存配置，之后需要重启 DSH；judge 留空时沿用该运行中 agent 的模型选择。edgeVoice 仅控制 voice-mini 不可用时的内置音色，下一次播报生效，音频缓存按音色和文本区分；greetings 是重启欢迎语的附加列表。服务缺失时使用插件配置，服务卸载后即时字段回退插件配置。内部路径及会话身份不暴露在页面，J7 的 askInterception 尚未加入。
 
 续轮顺序固定为 **轮次结束 → 判断 → ask_user → 用户决定 → 投递新 UserMessage**。`session/event` 监听器不等待判断或用户回答；不使用 `agent/turn-stopping`，不向会话日志写自定义事件。
 
@@ -392,7 +394,7 @@ ctx.on('user-questions/request', (req, next) => live.holdAsk(req, next), { prepe
 
 **当前已落地**：插件创建/恢复与标题固定、托管集合、任务台账、轮末判断与用户批准续做、完成播报合并和提问排队、审批竞答与异步 HTML 记录、voice-mini 轮末让出、原生面板及任务进度。
 
-**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；设置 J6、自动答疑 J7；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
+**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；自动答疑 J7；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
 
 ## 17. 平台移植性(为什么先只做 DSH)
 

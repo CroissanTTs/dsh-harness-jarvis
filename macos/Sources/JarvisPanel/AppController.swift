@@ -8,6 +8,7 @@ import JarvisPanelCore
 final class AppController: NSObject {
   private let store: SettingsStore
   private let model: PanelModel
+  private let approvalRules: ApprovalRulesModel
   private let demo: DemoAPI?
   private let snapshotDir: URL?
   private let overlayState = OverlayState()
@@ -42,6 +43,7 @@ final class AppController: NSObject {
     demo = env["JARVIS_DEMO"] == "1" || snapshotDir != nil ? DemoAPI() : nil
     let api: JarvisAPI = demo ?? JarvisClient()
     model = PanelModel(api: api, store: store)
+    approvalRules = ApprovalRulesModel(api: api)
     orb = OrbPanel(count: store.settings.tier.count)
     super.init()
     overlay = OverlayPanel(root: OverlayRootView(
@@ -609,7 +611,7 @@ final class AppController: NSObject {
         hotKeyError = nil
         return true
       })
-      let host = NSHostingController(rootView: SettingsView(model: settingsModel))
+      let host = NSHostingController(rootView: SettingsView(model: settingsModel, approvalRules: approvalRules))
       let window = NSWindow(contentViewController: host)
       window.title = "贾维斯设置"
       window.styleMask = [.titled, .closable]
@@ -617,6 +619,7 @@ final class AppController: NSObject {
       window.center()
       settingsWindow = window
     }
+    Task { await approvalRules.refresh() }
     NSApp.activate(ignoringOtherApps: true)
     settingsWindow?.makeKeyAndOrderFront(nil)
   }

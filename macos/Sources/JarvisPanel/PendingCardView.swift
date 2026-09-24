@@ -57,9 +57,12 @@ struct PendingCardView: View {
   @ViewBuilder
   private var actions: some View {
     if item.kind == .approval {
-      HStack(spacing: 6) {
+      FlowRow(spacing: 6) {
         pill("批准", filled: true) { await model.decide(item, allow: true) }
         pill("拒绝", filled: false) { await model.decide(item, allow: false) }
+        if item.canAlwaysAllow {
+          pill("总是允许（此工作区）", filled: false) { await model.alwaysAllow(item) }
+        }
       }
     } else {
       FlowRow(spacing: 6) {

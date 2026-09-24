@@ -45,7 +45,10 @@ export interface PendingWire {
   detail?: string;
   note?: string;
   choices: string[];
+  canAlwaysAllow?: boolean;
 }
+
+export interface ApprovalPresetPolicy { canAlwaysAllow: () => boolean; onAlways: () => void }
 
 export interface AnswerBody { id?: unknown; decision?: unknown; choice?: unknown; text?: unknown }
 
@@ -62,6 +65,8 @@ interface HeldApproval {
   toolName: string;
   command?: string;
   reason?: string;
+  preset?: ApprovalPresetPolicy;
+  always?: boolean;
   resolve: (outcome: ApprovalOutcome) => void;
 }
 
@@ -238,6 +243,7 @@ export class LiveState {
           detail: h.command ?? h.toolName,
           ...(h.reason ? { note: h.reason } : {}),
           choices: [],
+          canAlwaysAllow: this.canAlwaysAllow(h),
         });
         continue;
       }
@@ -256,21 +262,50 @@ export class LiveState {
 
   // ── held requests ─────────────────────────────────────────────────────
 
-  holdApproval(req: ApprovalRequestLike, next: () => Promise<ApprovalOutcome>, command?: string): Promise<ApprovalOutcome> {
+  holdApproval(req: ApprovalRequestLike, next: () => Promise<ApprovalOutcome>, command?: string,
+    preset?: ApprovalPresetPolicy): Promise<ApprovalOutcome> {
     const id = randomUUID();
     const original = req.signal;
     const downstream = new AbortController();
     const restore = swapSignal(req, downstream.signal);
-    const fromPanel = new Promise<ApprovalOutcome>((resolve) => {
-      this.hold({
+    let abort: () => void = () => {};
+    let panelAlways = false;
+    const result = new Promise<ApprovalOutcome>((resolve, reject) => {
+      let settled = false;
+      const settle = (outcome: ApprovalOutcome) => {
+        if (settled) return;
+        settled = true;
+        this.release(id);
+        resolve(outcome);
+      };
+      const held: HeldApproval = {
         kind: 'approval', id, session: String(req.agent.id), at: this.now(), toolName: req.toolName,
         ...(command ? { command } : {}),
         ...(req.reason ? { reason: req.reason } : {}),
-        resolve,
-      });
-      original?.addEventListener('abort', () => { this.release(id); }, { once: true });
+        preset,
+        resolve: outcome => {
+          if (settled) return;
+          panelAlways = held.always === true;
+          settle(outcome);
+        },
+      };
+      this.hold(held);
+      abort = () => settle('cancelled');
+      original?.addEventListener('abort', abort, { once: true });
+      if (original?.aborted) { abort(); return; }
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true; this.release(id); reject(error);
+      };
+      void Promise.resolve().then(() => { Promise.resolve(next()).then(settle, fail); }).catch(fail);
     });
-    return Promise.race([fromPanel, Promise.resolve().then(next)]).finally(() => {
+    return result.then(outcome => {
+      if (panelAlways && outcome === 'allowed-once') {
+        try { preset?.onAlways(); } catch { /* Preset persistence cannot change the approval. */ }
+      }
+      return outcome;
+    }).finally(() => {
+      original?.removeEventListener('abort', abort);
       downstream.abort(new Error('Approval settled through another answerer'));
       restore();
       this.release(id);
@@ -309,9 +344,11 @@ export class LiveState {
 
     if (held.kind === 'approval') {
       if (sep >= 0) return 'not-found';
-      if (body.decision !== 'allow' && body.decision !== 'deny') return 'invalid';
+      if (body.decision !== 'allow' && body.decision !== 'deny' && body.decision !== 'always') return 'invalid';
+      if (body.decision === 'always' && !this.canAlwaysAllow(held)) return 'invalid';
+      held.always = body.decision === 'always';
       this.release(heldId);
-      held.resolve(body.decision === 'allow' ? 'allowed-once' : 'rejected');
+      held.resolve(body.decision === 'deny' ? 'rejected' : 'allowed-once');
       return 'ok';
     }
 
@@ -340,6 +377,10 @@ export class LiveState {
     this.held.set(entry.id, entry);
     const timer = setTimeout(() => { if (this.held.has(entry.id)) this.bump(); }, PENDING_GRACE_MS);
     (timer as { unref?: () => void }).unref?.();
+  }
+
+  private canAlwaysAllow(held: HeldApproval): boolean {
+    try { return held.preset?.canAlwaysAllow() === true; } catch { return false; }
   }
 
   private release(id: string): void {

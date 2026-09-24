@@ -26,6 +26,27 @@ actor FakeAPI: JarvisAPI {
   func setVoiceError(_ e: JarvisAPIError?) { voiceError = e }
   func setWaitVersion(_ v: Int?) { waitVersion = v }
 
+  private var rules: [ApprovalRule] = []
+  private var rulesError: JarvisAPIError?
+  private var removeRuleError: JarvisAPIError?
+  private var rulesDelay: TimeInterval = 0
+  private(set) var removedRules: [ApprovalRule.Identity] = []
+  func setApprovalRules(_ value: [ApprovalRule]) { rules = value }
+  func setApprovalRulesError(_ value: JarvisAPIError?) { rulesError = value }
+  func setRemoveRuleError(_ value: JarvisAPIError?) { removeRuleError = value }
+  func setApprovalRulesDelay(_ value: TimeInterval) { rulesDelay = value }
+  func approvalRules() async throws -> [ApprovalRule] {
+    if rulesDelay > 0 { try await Task.sleep(for: .seconds(rulesDelay)) }
+    if let rulesError { throw rulesError }
+    return rules
+  }
+  func removeApprovalRule(_ identity: ApprovalRule.Identity) async throws {
+    removedRules.append(identity)
+    if rulesDelay > 0 { try await Task.sleep(for: .seconds(rulesDelay)) }
+    if let removeRuleError { throw removeRuleError }
+    rules.removeAll { $0.identity == identity }
+  }
+
   func snapshot() async throws -> Snapshot {
     snapshotCalls += 1
     return try snapshotResult.get()

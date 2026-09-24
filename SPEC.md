@@ -296,6 +296,14 @@ approval/request → 冻结审批上下文
 
 不经过模型自批，也不调用 remember 工具（审批独立保存，recall 按需检索）。`user-questions/request` 同样支持面板与 DSH 竞答；普通问题不生成审批记录。
 
+### 工作区审批预设（P0 已实现）
+
+审批卡片可显示次级按钮“总是允许（此工作区）”；仅服务端确认操作可保存时显示，缺少完整 cwd、高危操作和无法可靠解析的工具/命令均隐藏。`POST /jarvis/pending/answer` 的 `decision: "always"` 再次校验操作，只有面板赢得本次竞答才先返回 `allowed-once`，随后异步保存预设及原有 J3 记录；保存失败只记日志，不影响批准。
+
+预设存于 `memory/preferences/approvals.json`（相对 `memoryRoot`），以 MemoryStore 的 `preferences` 写锁串行读改写并原子替换。每条包含 `fingerprint`、`tool`、完整 `workspace`、毫秒时间戳 `createdAt` 和可选 `expiresAt`；三个匹配字段严格相等，到期即不匹配。使用 J3 指纹规范化，匹配时仍对原始完整操作执行高危否决。
+
+贾维斯提供 `list_approval_rules` / `remove_approval_rule`，面板设置支持列表和精确删除。**P0 只保存预设，仍逐次审批；P1 尚未启用。** 高危操作不能创建预设：包括危险命令、工作区外写入、受保护配置目录；未知 shell 语法/选项、含 `..` 的路径、悬空或越界符号链接、全局安装也保留逐次审批。
+
 ### Phase-2(后续):四级权限
 
 | 级 | answerer 返回 | 机制 | 社区先例 |
@@ -303,11 +311,11 @@ approval/request → 冻结审批上下文
 | 安全 | `allow` | safe 白名单/分类器直接放行 | dsh-approval-gate 白名单 |
 | 灰色 | `allow`/`deny`/`escalate` | Jarvis(LLM)读 operation+context+近似历史判断;低置信→`ask_user` | dsh-approval-llm 三态 + ESCALATE |
 | 中危 | escalate→relay | 交给用户决定后 relay | 沿用 Phase-1 的人工决定原则 |
-| 高危 | `deny`(默认)/`allow`(仅当命中) | `recall` fingerprint 精确同场景 或 用户 preset;**无则 deny + 告知** | dsh-approval-gate 硬风险永远人审 + 操作指纹 |
+| 高危 | escalate→relay | 始终交给用户决定，不自动批准或拒绝（backlog D6）；P0 禁止创建高危预设 | dsh-approval-gate 硬风险永远人审 + 操作指纹 |
 
 **Phase-2 两个设计点(现在记,不在本轮)**:
 1. **"精确同场景"= fingerprint 定义**:tool + 规范化命令(args 顺序无关、路径相对化?)。Phase-1 schema 现在就记 raw + 规范化两份,Phase-2 直接用。
-2. **"用户设定"(preset)**:高危的放行出口——需一种让用户预声明"允许 X 在 Y 场景"的记忆类型(`preferences/*.html`),Phase-2 才做。
+2. **"用户设定"(preset)**：P0 已提供工作区预设 JSON；P1 后续接入匹配，且必须继续保留高危否决，不以预设绕过。
 
 ## 12. 悬浮窗（原生 macOS）
 
@@ -397,9 +405,9 @@ ctx.on('user-questions/request', (req, next) => askInterceptor.answer(req,
 
 ## 16. 实现范围与后续
 
-**当前已落地**：插件创建/恢复与标题固定、托管集合、任务台账、轮末判断与用户批准续做、完成播报合并和提问排队、审批竞答与异步 HTML 记录、voice-mini 轮末让出、原生面板及任务进度。
+**当前已落地**：插件创建/恢复与标题固定、托管集合、任务台账、轮末判断与用户批准续做、完成播报合并和提问排队、审批竞答与异步 HTML 记录、工作区审批预设 P0、voice-mini 轮末让出、原生面板及任务进度。
 
-**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
+**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；语音输入 S0/S1；分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
 
 ## 17. 平台移植性(为什么先只做 DSH)
 

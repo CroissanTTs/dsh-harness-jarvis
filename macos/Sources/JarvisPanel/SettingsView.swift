@@ -56,6 +56,7 @@ final class SettingsModel: ObservableObject {
 
 struct SettingsView: View {
   @ObservedObject var model: SettingsModel
+  @ObservedObject var approvalRules: ApprovalRulesModel
 
   var body: some View {
     Form {
@@ -70,6 +71,7 @@ struct SettingsView: View {
           Text(error).font(.caption).foregroundStyle(.red)
         }
       }
+      approvalRulesSection
       Section("显示") {
         opacitySlider("DSH 在前台时", value: $model.settings.dshOpacity)
         opacitySlider("其他应用在前台时", value: $model.settings.otherOpacity)
@@ -96,8 +98,55 @@ struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 420)
-    .fixedSize(horizontal: false, vertical: true)
+    .frame(width: 460, height: 720)
+  }
+
+  private var approvalRulesSection: some View {
+    Section("审批规则") {
+      HStack {
+        Text("预设仅限对应工作区；当前仍逐次审批。")
+          .font(.caption).foregroundStyle(.secondary)
+        Spacer()
+        Button("刷新") { Task { await approvalRules.refresh() } }
+          .disabled(approvalRules.isLoading || approvalRules.removing != nil)
+      }
+      if approvalRules.isLoading {
+        ProgressView("加载审批规则…").controlSize(.small)
+      }
+      if let error = approvalRules.error {
+        Text(error).font(.caption).foregroundStyle(.red)
+      }
+      if approvalRules.rules.isEmpty && !approvalRules.isLoading && approvalRules.error == nil {
+        Text("暂无审批规则").foregroundStyle(.secondary)
+      }
+      ForEach(approvalRules.rules) { rule in
+        HStack(alignment: .top, spacing: 10) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(rule.tool).font(.headline)
+            Text(rule.workspace).font(.caption).textSelection(.enabled)
+            Text("指纹：\(rule.fingerprint)")
+              .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+              .textSelection(.enabled)
+            Text("创建于 \(ruleDate(rule.createdAt))").font(.caption2).foregroundStyle(.secondary)
+            if let expiry = rule.expiresAt {
+              Text("到期于 \(ruleDate(expiry))").font(.caption2).foregroundStyle(.secondary)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          if approvalRules.removing == rule.identity {
+            ProgressView().controlSize(.small)
+          } else {
+            Button("删除") { Task { await approvalRules.remove(rule) } }
+              .disabled(approvalRules.isLoading || approvalRules.removing != nil)
+              .accessibilityLabel("删除 \(rule.tool) 在 \(rule.workspace) 的审批规则")
+          }
+        }
+      }
+    }
+  }
+
+  private func ruleDate(_ milliseconds: Double) -> String {
+    Date(timeIntervalSince1970: milliseconds / 1000).formatted(date: .abbreviated, time: .shortened)
   }
 
   private func opacitySlider(_ title: String, value: Binding<Double>) -> some View {

@@ -2,6 +2,7 @@ import Foundation
 
 public enum PendingAnswer: Sendable, Equatable {
   case decision(id: String, allow: Bool)
+  case always(id: String)
   case choice(id: String, choice: String)
   case text(id: String, text: String)
 }
@@ -40,6 +41,8 @@ public protocol JarvisAPI: Sendable {
   /// Hands a session to Jarvis (`managed == true`) or takes it back.
   func setManaged(session: String, managed: Bool) async throws
   func send(text: String, target: String?) async throws
+  func approvalRules() async throws -> [ApprovalRule]
+  func removeApprovalRule(_ identity: ApprovalRule.Identity) async throws
   func answer(_ answer: PendingAnswer) async throws
   func voice(_ action: VoiceAction) async throws
   func markRead(session: String?) async throws

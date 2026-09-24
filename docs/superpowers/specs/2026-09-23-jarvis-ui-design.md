@@ -141,6 +141,7 @@
 
 - 有审批或提问时，卡片按时间顺序堆在输入条上方（最多显示 3 张，其余折叠为"还有 N 件"）。
 - 审批卡：`会话名 · 请求执行`、命令（等宽字体，host 展示最多 300 字符）、`批准` / `拒绝`。DSH 原窗口同时可答，先答者生效；审批结果先返回，随后异步写 HTML 记录，写失败不影响用户决定。
+- P0：仅 `canAlwaysAllow: true` 的审批卡显示次级按钮 `总是允许（此工作区）`，提问卡或缺少/非法字段时隐藏。点击发送 `decision: "always"`，本次批准后异步保存工作区预设；高危或无法可靠判定的操作由 host 隐藏按钮并拒绝伪造请求。当前仍逐次审批，自动审批待 P1。
 - 提问卡：`会话名 · 问题`、选项按钮、`我来回答`。
 - 点选项直接提交；卡片右上角 ↗ 回到 DSH 查看完整上下文。
 - 点"我来回答"时，输入条目标切到该会话，并标记为"回答中"，发送内容作为答复提交。
@@ -158,6 +159,8 @@
 右键形象弹出系统菜单，只有两项：`设置…` / `退出`（退出后下次 DSH 启动时由插件重新拉起）。声音控制只在 Hover 按钮里，不在菜单里重复。
 
 设置是一个独立的原生窗口（SwiftUI `Form`），保存在 `~/.dsh/jarvis/panel.json`：
+
+P0 新增“审批规则”区域，每次打开从 host 刷新，可按工具、完整工作区路径和指纹查看并删除预设，展示创建/到期日期、加载和错误状态。此列表存于插件的 `memory/preferences/approvals.json`，不写入 `panel.json`；删除发送完整三元组，404 时重新加载，失败保留原列表供重试。
 
 | 分组 | 项 | 默认 |
 |---|---|---|
@@ -203,7 +206,7 @@
     "status": "running | waiting | done | failed | idle", "unread": false,
     "task": { "status": "open | judging | unsatisfied", "summary": "补齐回归测试" }
   }],
-  "pending": [{ "id": "…", "kind": "approval | question", "session": "…", "title": "…", "detail": "rm -rf node_modules", "note": "…", "choices": ["保留旧表", "直接替换"] }]
+  "pending": [{ "id": "…", "kind": "approval | question", "session": "…", "title": "…", "detail": "rm -rf node_modules", "note": "…", "choices": ["保留旧表", "直接替换"], "canAlwaysAllow": false }]
 }
 ```
 
@@ -219,7 +222,9 @@
 | `POST /jarvis/managed` | `{session, managed: boolean}` | `{managed:[id]}`；纳入或移出，纳入不存在/不可见目标返回 404，缺少参数返回 400；移出终止任务并清理旧续做问题 |
 | `GET /jarvis/messages` | `?session=<worker-id>` 可选 | 默认 Jarvis 对话；指定 id 读取可见 worker，未知目标 404；正常返回 `{messages:[…], count}`，会话尚不可用时返回 `{messages:[], error:"no session"}` |
 | `POST /jarvis/input` | `{text, session?}` | `{ok:true}`；不传 session 为直接对话，传 session 为指定目标转发；空输入 400、Jarvis 未就绪 503 |
-| `POST /jarvis/pending/answer` | `{id, decision?: "allow" \| "deny", choice?: string, text?: string}` | 成功 204；答案非法 400，已失效/不存在 404 |
+| `POST /jarvis/pending/answer` | `{id, decision?: "allow" \| "deny" \| "always", choice?: string, text?: string}` | 成功 204；答案非法或不允许创建预设时 400，已失效/不存在 404 |
+| `GET /jarvis/approval-rules` | 无 | `{rules:[{fingerprint,tool,workspace,createdAt,expiresAt?}]}`；返回未过期预设 |
+| `POST /jarvis/approval-rules/remove` | `{fingerprint,tool,workspace}` | 精确删除，成功 204；非法三元组 400，不存在 404 |
 | `POST /jarvis/voice` | `{action: "pause" \| "resume" \| "skip" \| "clear" \| "mute" \| "unmute"}` | 成功 204，未知动作 400；静音/取消静音与 voice-mini 队列控制 |
 | `POST /jarvis/read` | `{session?}` | 204；清除指定会话或全部未读与失败标记 |
 | `POST /jarvis/open` | `{session}` | 204；当前把 DSH 切到前台，尚不保证定位指定会话 |

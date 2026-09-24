@@ -12,16 +12,17 @@ public actor DemoAPI: JarvisAPI {
   private var extraMessages: [ChatMessage] = []
   private var read = false
   private var pinned: Int?
+  private var savedRules: [ApprovalRule] = []
 
   public init(start: Date = Date()) {
     self.start = start
   }
 
   private enum Scene: Int, CaseIterable {
-    case idle, awaiting, thinking, speaking, attention, failed, narrating, taskStates
+    case idle, awaiting, thinking, speaking, attention, failed, narrating, taskStates, approvalPreset
   }
 
-  /// Freezes the demo on one scene (0 idle … 7 task states, wrapping); nil resumes the clock.
+  /// Freezes the demo on one scene (0 idle … 8 approval presets, wrapping); nil resumes the clock.
   public func setScene(_ index: Int?) {
     pinned = index
   }
@@ -49,6 +50,9 @@ public actor DemoAPI: JarvisAPI {
                 choices: ["保留旧表", "直接替换"]),
   ]
 
+  private let presetPending = PendingItem(id: "demo-p3", kind: .approval, session: "demo-hammer",
+    title: "请求执行", detail: "swift test --package-path macos", note: "只允许此工具和工作区中的相同请求。", canAlwaysAllow: true)
+
   /// Answers and read state last for one pass through the scenes.
   @discardableResult
   private func syncCycle() -> Scene {
@@ -59,7 +63,8 @@ public actor DemoAPI: JarvisAPI {
 
   public func snapshot() async throws -> Snapshot {
     let scene = syncCycle()
-    let pending = scene == .attention ? demoPending.filter { !answered.contains($0.id) } : []
+    let items = scene == .approvalPreset ? [presetPending] + demoPending : (scene == .attention ? demoPending : [])
+    let pending = items.filter { !answered.contains($0.id) }
     let activity: Activity
     switch scene {
     case .awaiting: activity = .awaiting
@@ -135,12 +140,27 @@ public actor DemoAPI: JarvisAPI {
   public func answer(_ answer: PendingAnswer) async throws {
     syncCycle()
     switch answer {
+    case .always(let id):
+      guard let item = (demoPending + [presetPending]).first(where: { $0.id == id }), !answered.contains(id) else {
+        throw JarvisAPIError.http(404)
+      }
+      guard item.canAlwaysAllow else { throw JarvisAPIError.http(400) }
+      savedRules.append(ApprovalRule(fingerprint: "demo-read-tests", tool: "shell",
+                                    workspace: "/Users/demo/hammer", createdAt: Date().timeIntervalSince1970 * 1000))
+      answered.insert(id)
     case .decision(let id, _), .choice(let id, _), .text(let id, _):
-      guard demoPending.contains(where: { $0.id == id }), !answered.contains(id) else {
+      guard (demoPending + [presetPending]).contains(where: { $0.id == id }), !answered.contains(id) else {
         throw JarvisAPIError.http(404)
       }
       answered.insert(id)
     }
+  }
+
+  public func approvalRules() async throws -> [ApprovalRule] { savedRules }
+
+  public func removeApprovalRule(_ identity: ApprovalRule.Identity) async throws {
+    guard savedRules.contains(where: { $0.identity == identity }) else { throw JarvisAPIError.http(404) }
+    savedRules.removeAll { $0.identity == identity }
   }
 
   public func voice(_ action: VoiceAction) async throws {

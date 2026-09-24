@@ -327,6 +327,11 @@ public final class PanelModel: ObservableObject {
     await submitAnswer(.decision(id: item.id, allow: allow))
   }
 
+  public func alwaysAllow(_ item: PendingItem) async {
+    guard item.canAlwaysAllow else { return }
+    await submitAnswer(.always(id: item.id))
+  }
+
   public func choose(_ item: PendingItem, choice: String) async {
     await submitAnswer(.choice(id: item.id, choice: choice))
   }

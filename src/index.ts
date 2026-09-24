@@ -40,6 +40,8 @@ import { AskInterceptor } from './ask-intercept.ts';
 import { captureTemp, type CaptureSession } from './memory/capture.ts';
 import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
+import { ApprovalPresets, validRuleKey, type ApprovalRuleKey } from './approval-presets.ts';
+import { canPresetApproval, type PresetOperation } from './approval-risk.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
@@ -228,6 +230,7 @@ const COMMANDER_PERSONA = [
   '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
   '- 收到以 [会话 … 判断未满足] 开头的通知时，按通知要求用 ask_user 询问并传入 session 和 task，不要自己决定续做。用户选继续才用 inject_to_session 发送具体续做指令；选不用了就结束。回答已失效时不要再发送旧续做指令。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
+  '- 用户要查看或撤销审批预设时，用 list_approval_rules / remove_approval_rule；删除时原样传回 fingerprint、tool、workspace。只有用户在审批卡片点总是允许才能创建预设，预设目前不触发自动审批。',
   "- 用户说'记住…'就用 remember；需要回忆过去的约定或决定时先 recall。",
   '- 一两句话,别读代码/路径/markdown 出来。',
 ].join('\n');
@@ -237,6 +240,7 @@ interface JarvisDeps {
   managed: ManagedSet;
   ledger: TaskLedger;
   memory: MemoryStore;
+  presets: ApprovalPresets;
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
@@ -433,6 +437,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     onError: e => debug(entry, 'memory lock diagnostic failed: ' + (e instanceof Error ? e.message : String(e))),
   });
   const live = new LiveState(entry.jarvisSessionId);
+  const presets = new ApprovalPresets(memory);
 
   /** Every visible worker (not Jarvis, not archived), flagged by whether it is handed to Jarvis. */
   const sessionRows = async (): Promise<SessionRow[]> => {
@@ -465,6 +470,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     managed,
     ledger,
     memory,
+    presets,
     sessionRows,
     setManaged,
     say: (text) => speakAsJarvis(builtInTts, entry, text, live),
@@ -622,6 +628,16 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             if (result === 'ok') { res.statusCode = 204; res.end(); return; }
             sendJson(res, result === 'invalid' ? 400 : 404, { error: result });
             return;
+          }
+          if (url === '/approval-rules' && req.method === 'GET') {
+            sendJson(res, 200, { rules: await presets.list() });
+            return;
+          }
+          if (url === '/approval-rules/remove' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            if (!validRuleKey(body)) { sendJson(res, 400, { error: 'invalid rule key' }); return; }
+            if (!await presets.remove(body)) { sendJson(res, 404, { error: 'rule not found' }); return; }
+            res.statusCode = 204; res.end(); return;
           }
           if (url === '/voice' && req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}');
@@ -918,6 +934,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     let snapshot: Omit<ApprovalRecord, 'ts' | 'decision'> | undefined;
     let metadataError: unknown;
     let command: string | undefined;
+    let presetOperation: PresetOperation | undefined;
     try {
       // Freeze request metadata before DSH resumes and starts mutating the session.
       const sid = String(req.agent.id);
@@ -929,6 +946,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
         .map((block: any) => block.text).join('\n');
       const cwd = (ctx as any).get?.('sessions')?.get?.(sid)?.header?.cwd;
+      presetOperation = { tool: req.toolName, command, args: operation.args, workspace: typeof cwd === 'string' ? cwd : '' };
       snapshot = {
         fingerprint: fingerprint(req.toolName, command),
         session: { id: sid, cwd: typeof cwd === 'string' ? cwd : '', managed: managed.has(sid) },
@@ -937,7 +955,19 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         tier: { value: '', notes: 'Phase1:未分级' },
       };
     } catch (error) { metadataError = error; }
-    return live.holdApproval(req, next, command?.slice(0, 300)).then(outcome => {
+    return live.holdApproval(req, next, command?.slice(0, 300), {
+      canAlwaysAllow: () => !!presetOperation && canPresetApproval(presetOperation),
+      onAlways: () => {
+        const operation = presetOperation;
+        if (!operation) return;
+        // Return the current approval before acquiring any storage locks or doing I/O.
+        setImmediate(() => {
+          void presets.add(operation).catch(error => {
+            try { debug(entry, 'approval preset failed: ' + (error instanceof Error ? error.message : String(error))); } catch {}
+          });
+        });
+      },
+    }).then(outcome => {
       if (outcome !== 'allowed-once' && outcome !== 'rejected') return outcome;
       const ts = new Date().toISOString();
       // A microtask would run before the DSH waterfall returns to its caller.
@@ -1281,6 +1311,21 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
   if (!tools) { debug(entry, 'tools NOT found — cannot register'); return; }
   const selfId = entry.jarvisSessionId;
   const text = (t: string) => ({ text: t });
+
+  tools.register(defineTool({
+    name: 'list_approval_rules',
+    description: '列出用户在审批卡片创建的未过期工作区预设。返回 fingerprint、tool、workspace 供精确删除；预设目前不触发自动审批。',
+    parameters: {}, output: textOutput, isConcurrencySafe: () => true,
+    async execute() { return text(JSON.stringify(await deps.presets.list(), null, 2)); },
+  } as never));
+  tools.register(defineTool({
+    name: 'remove_approval_rule',
+    description: '用户要求撤销审批预设时，用列表中的 fingerprint、tool、workspace 原值精确删除该预设。',
+    parameters: { fingerprint: { type: 'string' as const, required: true },
+      tool: { type: 'string' as const, required: true }, workspace: { type: 'string' as const, required: true } },
+    output: textOutput, isConcurrencySafe: () => true,
+    async execute(args: ApprovalRuleKey) { return text(await deps.presets.remove(args) ? '已删除审批预设' : '未找到审批预设'); },
+  } as never));
 
   tools.register(defineTool({
     name: 'remember',

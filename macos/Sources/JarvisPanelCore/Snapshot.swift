@@ -112,9 +112,11 @@ public struct PendingItem: Decodable, Sendable, Equatable, Identifiable {
   public var detail: String?
   public var note: String?
   public var choices: [String]
+  private var allowsWorkspaceRule: Bool
+  public var canAlwaysAllow: Bool { kind == .approval && allowsWorkspaceRule }
 
   public init(id: String, kind: PendingKind, session: String, title: String,
-              detail: String? = nil, note: String? = nil, choices: [String] = []) {
+              detail: String? = nil, note: String? = nil, choices: [String] = [], canAlwaysAllow: Bool = false) {
     self.id = id
     self.kind = kind
     self.session = session
@@ -122,6 +124,7 @@ public struct PendingItem: Decodable, Sendable, Equatable, Identifiable {
     self.detail = detail
     self.note = note
     self.choices = choices
+    self.allowsWorkspaceRule = canAlwaysAllow
   }
 
   public init(from decoder: Decoder) throws {
@@ -133,9 +136,10 @@ public struct PendingItem: Decodable, Sendable, Equatable, Identifiable {
     detail = try c.decodeIfPresent(String.self, forKey: .detail)
     note = try c.decodeIfPresent(String.self, forKey: .note)
     choices = try c.decodeIfPresent([String].self, forKey: .choices) ?? []
+    allowsWorkspaceRule = (try? c.decodeIfPresent(Bool.self, forKey: .canAlwaysAllow)) ?? false
   }
 
-  private enum CodingKeys: String, CodingKey { case id, kind, session, title, detail, note, choices }
+  private enum CodingKeys: String, CodingKey { case id, kind, session, title, detail, note, choices, canAlwaysAllow }
 }
 
 /// Whose words are playing: Jarvis's own voice, or voice-mini narrating another session.

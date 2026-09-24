@@ -75,11 +75,25 @@ public final class JarvisClient: JarvisAPI, @unchecked Sendable {
   public func answer(_ answer: PendingAnswer) async throws {
     let body: [String: Any]
     switch answer {
+    case .always(let id): body = ["id": id, "decision": "always"]
     case .decision(let id, let allow): body = ["id": id, "decision": allow ? "allow" : "deny"]
     case .choice(let id, let choice): body = ["id": id, "choice": choice]
     case .text(let id, let text): body = ["id": id, "text": text]
     }
     _ = try await request("POST", "/jarvis/pending/answer", body: body)
+  }
+
+  public func approvalRules() async throws -> [ApprovalRule] {
+    let data = try await request("GET", "/jarvis/approval-rules")
+    struct Reply: Decodable { let rules: [ApprovalRule] }
+    do { return try JSONDecoder().decode(Reply.self, from: data).rules }
+    catch { throw JarvisAPIError.decoding }
+  }
+
+  public func removeApprovalRule(_ identity: ApprovalRule.Identity) async throws {
+    _ = try await request("POST", "/jarvis/approval-rules/remove", body: [
+      "fingerprint": identity.fingerprint, "tool": identity.tool, "workspace": identity.workspace,
+    ])
   }
 
   public func voice(_ action: VoiceAction) async throws {

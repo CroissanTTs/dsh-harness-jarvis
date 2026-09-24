@@ -44,6 +44,7 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { LiveState } from './live-state.ts';
 import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
+import { TaskLedger } from './tasks.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -132,6 +133,7 @@ export const Config = z.object({
   locale: z.union(['zh', 'en']).default('zh'),
   audioDir: z.string().default('~/.dsh/jarvis'),
   managedFile: z.string().default('~/.dsh/jarvis/managed.json'),
+  tasksFile: z.string().default('~/.dsh/jarvis/tasks.json'),
   lockFile: z.string().default('~/.dsh/jarvis/lock.json'),
   runtimeFile: z.string().default('~/.dsh/jarvis/runtime.json'),
   titlePrefix: z.string().default('贾维斯-'),
@@ -152,6 +154,7 @@ interface JarvisConfig {
   locale: string;
   audioDir: string;
   managedFile: string;
+  tasksFile: string;
   lockFile: string;
   runtimeFile: string;
   titlePrefix: string;
@@ -192,6 +195,7 @@ const COMMANDER_PERSONA = [
 /** What Jarvis's tools need from the running plugin. */
 interface JarvisDeps {
   managed: ManagedSet;
+  ledger: TaskLedger;
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
@@ -334,6 +338,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   debug(entry, 'apply() started');
   const managed = new ManagedSet(resolveDir(entry.managedFile),
     (e) => debug(entry, 'managed.json write failed: ' + (e instanceof Error ? e.message : String(e))));
+  const ledger = new TaskLedger(resolveDir(entry.tasksFile),
+    (e) => debug(entry, 'tasks.json write failed: ' + (e instanceof Error ? e.message : String(e))));
+  const pruneTasks = setInterval(() => ledger.prune(Date.now()), 60_000);
+  pruneTasks.unref();
   const lock = loadLock(entry.lockFile);
   const live = new LiveState(entry.jarvisSessionId);
 
@@ -356,12 +364,14 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
 
   const setManaged = async (id: string, on: boolean): Promise<'ok' | 'not-found'> => {
     if (on && !listWorkerIds(ctx, entry).includes(id)) return 'not-found';
+    if (!on) ledger.dropSession(id);
     if (on ? managed.add(id) : managed.remove(id)) live.touch();
     return 'ok';
   };
 
   const deps: JarvisDeps = {
     managed,
+    ledger,
     sessionRows,
     setManaged,
     say: (text) => speakAsJarvis(builtInTts, entry, text),
@@ -616,10 +626,12 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
             live.userSent();
             if (typeof agent?.followup === 'function') {
               agent.followup(msg);
+              if (session) ledger.expect(session, body.text);
               debug(entry, '/jarvis/input: followup() — "' + text.slice(0, 60) + '"' + (session ? ' → ' + session : ''));
               sendJson(res, 200, { ok: true });
             } else if (typeof agent?.inject === 'function') {
               agent.inject(msg);
+              if (session) ledger.expect(session, body.text);
               debug(entry, '/jarvis/input: inject() — "' + text.slice(0, 60) + '"');
               sendJson(res, 200, { ok: true });
             } else {
@@ -753,7 +765,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // Cordis convention: apply() returns a disposer that runs when this plugin
   // context is torn down (DSH quits / plugin unloads) — kill the悬浮窗 panel
   // so the orb's lifecycle stays tied to DSH ("和 DSH 作为依赖").
-  return () => killPanel(entry);
+  return () => {
+    clearInterval(pruneTasks);
+    killPanel(entry);
+  };
 }
 
 /** Built-in restart welcome greetings per locale. */
@@ -1080,6 +1095,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
     output: textOutput,
     isConcurrencySafe: () => true,
     async execute(args: { session: string; message: string }) {
+      if (!args.session.trim() || !args.message.trim()) throw new Error('inject_to_session: session/message must not be empty');
       if (args.session === selfId) throw new Error('inject_to_session: cannot target self');
       if (!deps.managed.has(args.session)) {
         throw new Error('inject_to_session: 该会话不在托管集,请先让用户把它交给你(manage_session)');
@@ -1095,6 +1111,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
       };
       const how = deliver(target, note);
       if (!how) throw new Error('inject_to_session: target accepts no messages');
+      deps.ledger.open(args.session, args.message);
       return text(how === 'steer' ? '已插入对方正在进行的这一轮' : '已发送,对方开始处理');
     },
   } as never));

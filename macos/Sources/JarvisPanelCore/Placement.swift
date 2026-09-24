@@ -78,7 +78,9 @@ public struct Workspace: Equatable, Sendable {
 public enum Placement {
   public static let orbWindow: CGFloat = 140
   public static let orbRadius: CGFloat = 60
-  public static let snapDistance: CGFloat = 30
+  /// Measured from the window edge, which sits 10pt outside the visible orb.
+  /// Dragging clamps the window to the edge, so pushing into it always docks.
+  public static let snapDistance: CGFloat = 10
   public static let dragThreshold: CGFloat = 4
   public static let buttonRadius: CGFloat = 88
   public static let buttonSize: CGFloat = 30

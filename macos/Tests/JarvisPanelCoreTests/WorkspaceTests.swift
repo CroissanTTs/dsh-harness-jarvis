@@ -21,19 +21,19 @@ final class WorkspaceTests: XCTestCase {
   }
 
   func testTopRightCornerIsReachableBesideRightDock() {
-    let r = Placement.snap(frame: frame(1300, 770), workspace: rightDock, notchX: nil)
+    let r = Placement.snap(frame: frame(1322, 775), workspace: rightDock, notchX: nil)
     XCTAssertEqual(r.origin, CGPoint(x: 1330, y: 783))
     XCTAssertEqual(r.dock, .topRight)
   }
 
   func testBottomRightCornerIsReachableBesideRightDock() {
-    let r = Placement.snap(frame: frame(1300, 15), workspace: rightDock, notchX: nil)
+    let r = Placement.snap(frame: frame(1322, 6), workspace: rightDock, notchX: nil)
     XCTAssertEqual(r.origin, CGPoint(x: 1330, y: 0))
     XCTAssertEqual(r.dock, .bottomRight)
   }
 
   func testRightEdgeBesideDockStopsAtDock() {
-    let r = Placement.snap(frame: frame(1230, 400), workspace: rightDock, notchX: nil)
+    let r = Placement.snap(frame: frame(1243, 400), workspace: rightDock, notchX: nil)
     XCTAssertEqual(r.origin, CGPoint(x: 1251, y: 400))
     XCTAssertEqual(r.dock, .right)
   }
@@ -46,14 +46,14 @@ final class WorkspaceTests: XCTestCase {
 
   func testBottomLeftCornerIsReachableBesideBottomDock() {
     let ws = Workspace.make(screen: screen, visible: bottomVisible, dockLength: 600)
-    let r = Placement.snap(frame: frame(20, 20), workspace: ws, notchX: nil)
+    let r = Placement.snap(frame: frame(6, 6), workspace: ws, notchX: nil)
     XCTAssertEqual(r.origin, .zero)
     XCTAssertEqual(r.dock, .bottomLeft)
   }
 
   func testBottomEdgeAboveBottomDockStopsAtDock() {
     let ws = Workspace.make(screen: screen, visible: bottomVisible, dockLength: 600)
-    let r = Placement.snap(frame: frame(600, 90), workspace: ws, notchX: nil)
+    let r = Placement.snap(frame: frame(600, 78), workspace: ws, notchX: nil)
     XCTAssertEqual(r.origin, CGPoint(x: 600, y: 70))
     XCTAssertEqual(r.dock, .bottom)
   }
@@ -80,7 +80,7 @@ final class WorkspaceTests: XCTestCase {
 
   func testUnknownDockLengthBlocksTheWholeEdge() {
     let ws = Workspace.make(screen: screen, visible: rightVisible, dockLength: nil)
-    let r = Placement.snap(frame: frame(1300, 770), workspace: ws, notchX: nil)
+    let r = Placement.snap(frame: frame(1300, 775), workspace: ws, notchX: nil)
     XCTAssertEqual(r.origin, CGPoint(x: 1251, y: 783))
   }
 

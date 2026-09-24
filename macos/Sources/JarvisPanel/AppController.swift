@@ -436,13 +436,15 @@ final class AppController: NSObject {
     let result = Placement.snap(frame: orb.frame, workspace: Self.workspace(screen), notchX: Self.notchX(screen))
     snapped = result.dock
     stripOpen = stripEdge != nil
-    NSAnimationContext.runAnimationGroup { ctx in
+    let target = CGRect(origin: result.origin, size: orb.frame.size)
+    // The window animator ignores setFrameOrigin; only setFrame moves the panel.
+    NSAnimationContext.runAnimationGroup({ ctx in
       ctx.duration = 0.18
       ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-      orb.animator().setFrameOrigin(result.origin)
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-      guard let self else { return }
+      orb.animator().setFrame(target, display: true)
+    }, completionHandler: { [weak self] in
+      guard let self, !dragging else { return }
+      if orb.frame.origin != target.origin { orb.setFrameOrigin(target.origin) }
       savePosition()
       hoverActive = false
       model.setHovering(false)
@@ -450,7 +452,7 @@ final class AppController: NSObject {
       trackMouse()
       if !hoverActive { closeStrip() }
       orb.badgeState.visible = !hoverActive
-    }
+    })
   }
 
   // MARK: Quick bar

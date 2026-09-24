@@ -129,13 +129,13 @@ final class PlacementTests: XCTestCase {
   }
 
   func testSnapToRightEdge() {
-    let r = Placement.snap(frame: frame(1280, 400), visible: visible, notchX: nil)
+    let r = Placement.snap(frame: frame(1292, 400), visible: visible, notchX: nil)
     XCTAssertEqual(r.dock, .right)
     XCTAssertEqual(r.origin, CGPoint(x: 1300, y: 400))
   }
 
   func testSnapToTopRightCorner() {
-    let r = Placement.snap(frame: frame(1280, 715), visible: visible, notchX: nil)
+    let r = Placement.snap(frame: frame(1292, 727), visible: visible, notchX: nil)
     XCTAssertEqual(r.dock, .topRight)
     XCTAssertEqual(r.origin, CGPoint(x: 1300, y: 735))
   }
@@ -147,13 +147,13 @@ final class PlacementTests: XCTestCase {
   }
 
   func testTopEdgeUnderNotchDoesNotDock() {
-    let r = Placement.snap(frame: frame(650, 720), visible: visible, notchX: 620...820)
+    let r = Placement.snap(frame: frame(650, 728), visible: visible, notchX: 620...820)
     XCTAssertNil(r.dock)
-    XCTAssertEqual(r.origin, CGPoint(x: 650, y: 720))
+    XCTAssertEqual(r.origin, CGPoint(x: 650, y: 728))
   }
 
   func testTopEdgeAwayFromNotchDocks() {
-    let r = Placement.snap(frame: frame(200, 720), visible: visible, notchX: 620...820)
+    let r = Placement.snap(frame: frame(200, 728), visible: visible, notchX: 620...820)
     XCTAssertEqual(r.dock, .top)
     XCTAssertEqual(r.origin.y, 735)
   }
@@ -165,8 +165,8 @@ final class PlacementTests: XCTestCase {
   }
 
   func testSnapBoundaryIsInclusive() {
-    XCTAssertEqual(Placement.snap(frame: frame(1270, 400), visible: visible, notchX: nil).dock, .right)
-    XCTAssertNil(Placement.snap(frame: frame(1269, 400), visible: visible, notchX: nil).dock)
+    XCTAssertEqual(Placement.snap(frame: frame(1290, 400), visible: visible, notchX: nil).dock, .right)
+    XCTAssertNil(Placement.snap(frame: frame(1289, 400), visible: visible, notchX: nil).dock)
   }
 
   // MARK: Quick bar

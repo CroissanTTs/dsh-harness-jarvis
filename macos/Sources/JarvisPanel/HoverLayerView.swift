@@ -96,18 +96,19 @@ struct HoverLayerView: View {
     }
   }
 
-  /// Grows out of the orb center on insert and shrinks back into it on removal.
+  /// Grows out of the orb center on insert and fades out where it stands on removal.
   private func emerge(at center: CGPoint, index: Int) -> AnyTransition {
     let orb = state.local(state.orbCenter)
     let size = state.frame.size
     let anchor = UnitPoint(x: center.x / max(size.width, 1), y: center.y / max(size.height, 1))
     let hidden = EmergeModifier(offset: CGSize(width: orb.x - center.x, height: orb.y - center.y),
                                 scale: 0.2, opacity: 0, anchor: anchor)
+    let vanished = EmergeModifier(offset: .zero, scale: 0.85, opacity: 0, anchor: anchor)
     let shown = EmergeModifier(offset: .zero, scale: 1, opacity: 1, anchor: anchor)
     return .asymmetric(
       insertion: .modifier(active: hidden, identity: shown)
         .animation(.spring(response: 0.32, dampingFraction: 0.72).delay(Double(index) * 0.05)),
-      removal: .modifier(active: hidden, identity: shown).animation(.easeIn(duration: 0.16)))
+      removal: .modifier(active: vanished, identity: shown).animation(.easeOut(duration: 0.12)))
   }
 
   private static func icon(_ kind: HoverButton) -> String {

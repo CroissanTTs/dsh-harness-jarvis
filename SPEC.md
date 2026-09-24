@@ -1,7 +1,7 @@
 # dsh-harness-jarvis — 设计 Spec
 
-> 状态：阶段 2 实现同步 · 2026-09-24
-> 已落地：J0/J1/J2/J3/J4/J5/U2；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 除审批记录外仍是后续记忆设计；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
+> 状态：M2 显式记忆工具实现同步 · 2026-09-24
+> 已落地：J0/J1/J2/J3/J4/J5/U2/M1/M2；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具和审批记录已落地，自动抓取与注入仍是后续设计；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
 > 单一真相源。MVP 砍 STT(悬浮窗文本输入窗口替代);权限面彻底干净(无 danger-full-access)。多对话核心:瘦编排+干净 worker+虚拟交错显示(§3.2);悬浮窗 dsh-notch 基(§12)。待研究:次要(见 §18)。
 
 ---
@@ -76,7 +76,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 - **worker 各自是独立干净 session**:每个 worker 有自己的 SessionID / cwd / transcript,**model context = 它自己的干净 surface**(`session.deriveMessages()`,已确认 dsh-session)。worker 的活在它自己 session 里跑,工具在它自己 cwd。worker 互不交错。
 - **Jarvis = 瘦编排 agent**:自己的独立 session(lean),只干**路由 / 口播 / inject 决策 / 续轮判断的编排**,**不堆 worker 内容**进自己 surface。Jarvis surface 保持瘦(决策日志)。
-- **完成判断读取 worker 本轮助手文本与任务台账**，由独立的一次性模型调用完成，不改 worker transcript，也不调用尚未实现的 `recall`。
+- **完成判断读取 worker 本轮助手文本与任务台账**，由独立的一次性模型调用完成，不改 worker transcript，也不调用 `recall`。
 - **显示与模型上下文分离**：面板当前按所选目标切换对话记录，转发消息可显示路由标记；不会把跨会话记录合并成 Jarvis 的真实 surface。
 - **模型从不看交错 blob**:worker 的 model call 用它自己干净 surface;Jarvis 的 model call 用它瘦 surface。两头都干净,**无需"过滤 transcript"——头号风险(context≠transcript)moot**。
 - **路由（显式选择）**：目标是“贾维斯”时直接对话；选择托管会话后，输入经 Jarvis 改写再 `inject_to_session`。面板记住上次目标，目标失效时回退“贾维斯”；不靠分类器猜测。见 §6/§12。
@@ -116,8 +116,8 @@ DSH / Cordis 加载插件 → apply()（全局）
 | `list_managed` | `{}` | 返回托管会话与其他可托管候选，含标题、工作区、状态和 id |
 | `manage_session` | `{session}` | 用户明确交付后纳入托管；目标必须是可见 worker |
 | `release_session` | `{session}` | 移出托管，终止未结任务并清除过期续做与排队问题 |
-| `recall`（未实现，见 backlog M2） | 后续 `{query, ...}` | 尚未注册；规划检索长期记忆 |
-| `remember`（未实现，见 backlog M2） | 后续 `{tag, content, ...}` | 尚未注册；规划显式写长期记忆 |
+| `recall` | `{query, session?, limit?}` | 检索 general + 指定会话长期；含审批/批准/拒绝时加审批库，返回关键点、来源、日期；默认5、最多10 |
+| `remember` | `{content, tag?, session?, expiresDays?}` | 第一句为关键点、其余为补充；session 空写 general，否则写该会话长期；成功返回“记住了” |
 
 续做问题的 `session` / `task` 都是可选字符串，但**必须一起提供**，原样传递到协调器和完成判断器；固定选项为“继续 / 不用了”。问题出队时校验任务与轮次，回答后再校验；已变化的任务不接受旧答案。“不用了”关闭对应任务，“继续”后由 Jarvis 再调用 `inject_to_session`，不会在 `ask_user` 内自动投递。
 
@@ -159,7 +159,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 - 插件自行调用 `agentLoop.createAgent`，会话已存在时 `resume`；两条路径都在 setup 里注册人格和工具，使用 DSH 正常 loop。
 - 创建/恢复成功且标题服务可用后，从 `ctx.get('sessions').get(id)` 获取**会话对象**，先 `sessionTitle.get(session)`；标题不是“贾维斯”时调用 `rename(session, '贾维斯')`。rename 会钉住标题，每次启动最多尝试一次，不在每轮重设；服务延迟注入可触发，异常仅记 debug。
-- 当前只有一个 Jarvis；多化身见 backlog A1。输出协调已实现（§8.2）；通用记忆写锁仍待 M1，当前审批记录独立原子写文件。
+- 当前只有一个 Jarvis；多化身见 backlog A1。输出协调已实现（§8.2）；审批记录已接入 MemoryStore 的 approvals 写锁，当前审批记录独立原子写文件。
 
 ### 9.2 托管集（worker 会话）
 
@@ -174,10 +174,10 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 ## 10. 记忆(两级:temp JSONL + 长期 HTML)
 
-> 实现边界：当前仅 §10.1 的审批记录已落地（J3）。以下通用记忆设计对应 backlog M1/M2/M3/M6；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
+> 实现边界：存储底座（M1）、显式 remember/recall（M2）和 §10.1 审批记录（J3）已落地。自动抓取与人设记忆注入对应 backlog M3/M6；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
 
-- **临时记忆 temp**:`~/.dsh/jarvis/temp/*.jsonl`,一行一事件(append-only,机器友好)。
-- **长期记忆**:`~/.dsh/jarvis/memory/*.html`(语义标签,可 grep+read,人/agent 可读)。
+- **临时记忆 temp**:`~/.dsh/jarvis/temp/<sessionId>/*.jsonl`,一行一事件(append-only,机器友好)。
+- **长期记忆**:`~/.dsh/jarvis/memory/{general,<sessionId>,approvals}/*.html`(语义标签,可 grep+read,人/agent 可读)。
 - **捕获(hybrid)**:插件自动抓 Jarvis/worker 的 `session/event`(assistant/message、tool 结果、turn 边界)写 temp(无感、不丢);Jarvis 显式 `remember` 写**长期**(curated 提升)。到长期两条路:① **固化**(auto,temp→长期)② **Remember**(显式)。
 - **固化触发**(四选一):temp 达阈值 / 用户主动 / 阶段完成 / 定时。
 - **原则1 关键点 + 源指针**:记忆存关键点 + 源 session 指针;细节不进记忆(指回 worker transcript / 提示用户看 session)→ 多 worker 也不爆。
@@ -204,9 +204,9 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 - 只记录 `allowed-once` / `rejected`；取消、不可用等结果不写。`source` 固定 user，`reason` 当前为空，不伪造用户解释，tier 留空供未来消费。
 - 先返回审批结果，`setImmediate` 再异步写文件；目录或写入失败只写 debug，绝不改变审批结果。
-- HTML 所有外部文本与属性均转义。默认目录 `~/.dsh/jarvis/memory/approvals`（可配置 approvalsDir）；临时文件写完后原子发布，同名加 `-2`、`-3` 等后缀，互不覆盖。M1 未合入，当前不依赖通用 MemoryStore。
+- HTML 所有外部文本与属性均转义。默认目录 `~/.dsh/jarvis/memory/approvals`（可配置 approvalsDir）；临时文件写完后原子发布，同名加 `-2`、`-3` 等后缀，互不覆盖。已接入 MemoryStore 的独立 approvals 写锁，记忆检索使用同库读锁。
 - fingerprint 为小写工具名 + `:` + 规范化命令前 8 个词：空白合并，以 `/` 或 `~` 开头的路径取 basename，只保留安全字符。它是粗粒度检索键，**不是唯一记录 id，也不是自动授权凭据**；文件名增加 UTC 秒级时间和碰撞后缀。完整原始操作仍在记录中。
-- 审批记录可供未来权限分级检索；通用 recall/remember 和自动批准尚未实现。
+- 显式 remember/recall 已实现：中英文词项按 key/tag/detail 的 3/2/1 权重排序，同分取新记录，跳过到期与损坏条目；recall 可检索现有审批记录。自动批准仍未实现。
 
 ### 10.2 处置分类器（后续设计，backlog M4 暂缓）
 
@@ -287,7 +287,7 @@ approval/request → 冻结审批上下文
   → setImmediate 后异步写审批 HTML（§10.1），写失败不影响审批
 ```
 
-不经过模型自批，也不调用尚未实现的 remember 工具。`user-questions/request` 同样支持面板与 DSH 竞答；普通问题不生成审批记录。
+不经过模型自批，也不调用 remember 工具（审批独立保存，recall 按需检索）。`user-questions/request` 同样支持面板与 DSH 竞答；普通问题不生成审批记录。
 
 ### Phase-2(后续):四级权限
 

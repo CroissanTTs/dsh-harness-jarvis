@@ -7,8 +7,8 @@
  * workers keep their own prompts and transcripts. Continuation waits for the
  * user's answer after turn/end, then Jarvis delivers a new UserMessage.
  *
- * General memory tools, settings UI and automatic question answering remain
- * backlog work; approval records already persist independently of those tools.
+ * Explicit memory tools use scoped stores; automatic capture, settings UI and
+ * automatic question answering remain backlog work.
  * Pure logic lives in sibling modules so it can be tested without DSH.
  *
  * @module dsh-harness-jarvis
@@ -33,6 +33,7 @@ import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
 import { MemoryStore } from './memory/store.ts';
+import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
@@ -204,6 +205,7 @@ const COMMANDER_PERSONA = [
   '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
   '- 收到以 [会话 … 判断未满足] 开头的通知时，按通知要求用 ask_user 询问并传入 session 和 task，不要自己决定续做。用户选继续才用 inject_to_session 发送具体续做指令；选不用了就结束。回答已失效时不要再发送旧续做指令。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
+  "- 用户说'记住…'就用 remember；需要回忆过去的约定或决定时先 recall。",
   '- 一两句话,别读代码/路径/markdown 出来。',
 ].join('\n');
 
@@ -1173,6 +1175,31 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
   if (!tools) { debug(entry, 'tools NOT found — cannot register'); return; }
   const selfId = entry.jarvisSessionId;
   const text = (t: string) => ({ text: t });
+
+  tools.register(defineTool({
+    name: 'remember',
+    description: '用户明确要求记住时保存长期记忆。content 第一句是关键点，其余为补充；session 留空存通用记忆，否则用会话 id。expiresDays 可选，到期后不再回忆。',
+    parameters: {
+      content: { type: 'string' as const, required: true },
+      tag: { type: 'string' as const }, session: { type: 'string' as const },
+      expiresDays: { type: 'number' as const },
+    },
+    output: textOutput,
+    isConcurrencySafe: () => true,
+    async execute(args: RememberArgs) { return text(await remember(deps.memory, args)); },
+  } as never));
+
+  tools.register(defineTool({
+    name: 'recall',
+    description: '回忆过去的约定或决定：查通用及指定会话的长期记忆。query 含审批、批准或拒绝时也查审批记录。只返回关键点、来源和日期；limit 默认5、最多10。',
+    parameters: {
+      query: { type: 'string' as const, required: true }, session: { type: 'string' as const },
+      limit: { type: 'number' as const },
+    },
+    output: textOutput,
+    isConcurrencySafe: () => true,
+    async execute(args: RecallArgs) { return text(await recall(deps.memory, args)); },
+  } as never));
 
   tools.register(defineTool({
     name: 'say_to_user',

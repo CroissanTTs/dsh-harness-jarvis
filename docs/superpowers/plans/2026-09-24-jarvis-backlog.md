@@ -50,7 +50,7 @@
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
 | M1 | 记忆存储底座：目录布局 + 按 store 读写锁 | — | 中 | 已完成（`m1-memory-store-20260924`） |
-| M2 | `remember` / `recall` 工具 | M1 | 中 | 待办 |
+| M2 | `remember` / `recall` 工具 | M1 | 中 | 已完成（`m2-remember-recall-20260924`） |
 | M3 | 自动抓取 temp（pass A）（与 M2 可并行） | M1 | 中 | 待办 |
 | M6 | 长期记忆注入贾维斯人设（L1 section） | M2 | 小 | 待办 |
 
@@ -356,7 +356,9 @@
   - 返回每条：`- [tag] key（来源：session 或 general，日期）`，不返回 detail 全文（§10 原则 1：关键点 + 源指针）。
 - **人设**：`COMMANDER_PERSONA` 加："用户说'记住…'就用 remember；需要回忆过去的约定或决定时先 recall。"
 - **测试**：打分排序、limit 边界（0、11）、过期过滤、中英文 query、空库、会话目录不存在、条目文件损坏被跳过。
-- **实现记录**：（空）
+- **实现记录**（Codex M2 / 2026-09-24）：确认 M1 已在 main 后，从最新 main 建 `codex/m2-remember-recall` 独立 worktree。新增 `src/memory/tools.ts` 与 `approval.ts`，remember 按首句/补充保存带 UUID、标签、来源及可选期限的长期条目；recall 读取 general、指定会话和按关键词启用的审批库，按 3/2/1 打分及创建时间排序，只返回关键点、来源和 UTC 日期。`registerJarvisTools` 沿用 textOutput 注册两工具，COMMANDER_PERSONA 加入使用指令，同步 SPEC 和存储接口文档；未修改 M1 存储实现或其他条目。
+  - 边界决定：空白 content/query 拒绝，空白 session/general 写通用库，其他会话 id 原样传给存储层，approvals 保留；tag 默认 note。按中文句末标点、英文 !/?、后接空白/结尾的句点（含闭引号）及换行拆首句，detail 由存储层截到 500 码点。expiresDays 允许非负有限小数，0 立即到期；limit 默认5，向下取整后限0–10（0无结果、11取10），非有限值拒绝。英文不分大小写，空白/标点切词，汉字逐字切分并去重；无命中不返回，到期时刻起跳过。单个损坏/读失败文件跳过，目录级 I/O 错误抛出，不把写失败报成“记住了”。J3 HTML 只读投影为“批准/拒绝 + 工具/命令”关键点（最多160码点）、审批标签及源会话；完整参数/上下文仅参与检索，不回传。
+  - 三段式测试新增 **28 项**，含真实 apply 注册、人设与 textOutput 接线、中英文混合分词、打分/新旧排序、0/11 limit、到期边界、并发写不覆盖、审批转义/损坏、空库及 I/O 异常。插件 **374/374**、面板 **222/222**、`npm run build`、`macos/build.sh`、`git diff --check` 全通过，独立审查无合并阻断。标签 `m2-remember-recall-20260924` 定位单个实现提交；合回 main 后主目录重建插件，需用户重启 DSH 并运行 `npm run smoke`，面板代码未改无需单独重启。人工验收：说“记住用中文回复”，再询问此前约定；分别验证指定会话记忆与审批历史检索。
 
 ### M3 自动抓取 temp（pass A）
 

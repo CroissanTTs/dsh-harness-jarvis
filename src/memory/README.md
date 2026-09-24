@@ -23,3 +23,13 @@ const entry = parseMemory((await memory.readLong('general', file))!);
 - J3 保持独立 `<approval>` HTML 格式及不覆盖文件的 hard-link 发布方式，在 DSH 已获得审批结果后的 setImmediate 中调用 `writeApproval(memory, ...)`，由它取得 approvals 写锁。旧 J3 条目里的 general 锁提醒由 M1 的独立 approvals 锁约定取代。
 - `withReadLock(scope, callback)` / `withWriteLock(scope, callback)` 为复合操作和其他文件格式提供锁，callback 收到该 scope 的长期目录，负责自己的原始 I/O、目录创建与路径校验。锁不可重入：callback 内不能再调用同 scope 的任何 MemoryStore 方法。异步 callback 结束或拒绝后释放锁；排队写优先于后来的读。P0 如需偏好 JSON，可用 approvals 写锁保护自己的原子发布。
 - `lock.json` 仅诊断，不是跨进程锁或租约。内容为 `{writes: [{store, startedAt}]}`，记录所有当前写；最后一写结束后删除。同进程每个配置路径首次构造时恢复一次：超过 60 秒的残留删除，恰好 60 秒保留；损坏诊断清除。诊断 I/O 与 onError 抛错不影响业务读写，真实数据 I/O 错误仍交调用方处理。
+
+## M2 显式记忆工具
+
+`remember(store, {content, tag?, session?, expiresDays?})` 和 `recall(store, {query, session?, limit?})` 位于 `tools.ts`，返回工具需要的纯文本，由 `registerJarvisTools` 包装为 `textOutput`。可传第三个参数 now（epoch 毫秒）测试到期边界。
+
+remember 使用随机 UUID，空白 content 拒绝；中文句末标点、英文 !/?、后接空白或结尾的英文句点及换行处分割第一句，剩余为 detail（存储层最多500码点）。tag 默认 note，空 session/general 写通用库，非空会话 id 保持原样，approvals 不能作为会话传入。expiresDays 为非负有限天数，可含小数；0 表示立即到期，省略则长期保留。写失败抛错，不返回“记住了”。
+
+recall 的 query 不得空白；英文不分大小写，按空白/标点切词，汉字逐字切分并去重。每个词在 key/tag/detail 命中分别计3/2/1分，不按出现次数累加；无命中不返回，同分按创建时间倒序，最后按来源与文件名稳定排序。limit 默认5，向下取整并限制0–10，非有限值拒绝；无结果返回“没有找到相关记忆”。过期边界为 expires <= now；单个损坏/读失败文件跳过，整个目录读取失败抛错，避免伪装空库。
+
+只有 query 含“审批/批准/拒绝”才添加 approvals 范围。`approval.ts` 只读解析 J3 格式，投影为审批标签、批准/拒绝 + 工具/命令关键点（最多160码点）、源会话和日期，参数/上下文/理由仅用于打分。普通长期条目以实际 store 标明来源，忽略可能过时的 entry.session；结果始终不返回 detail 全文，日期用UTC。审批记录读取不改变审批行为。

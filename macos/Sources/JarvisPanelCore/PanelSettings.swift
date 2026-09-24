@@ -64,6 +64,8 @@ public struct PanelSettings: Codable, Equatable, Sendable {
   public var lastTarget: String?
   public var historyExpanded = false
   public var showCaptions = true
+  /// nil selects the default ⌃⌥J combination.
+  public var hotKey: String?
 
   public init() {}
 
@@ -71,6 +73,7 @@ public struct PanelSettings: Codable, Equatable, Sendable {
     var s = self
     s.dshOpacity = min(max(s.dshOpacity, Self.opacityRange.lowerBound), Self.opacityRange.upperBound)
     s.otherOpacity = min(max(s.otherOpacity, Self.opacityRange.lowerBound), Self.opacityRange.upperBound)
+    s.hotKey = s.hotKey.flatMap { HotKeySpec($0)?.displayString }
     return s
   }
 
@@ -96,12 +99,13 @@ public struct PanelSettings: Codable, Equatable, Sendable {
     lastTarget = value(.lastTarget, d.lastTarget)
     historyExpanded = value(.historyExpanded, d.historyExpanded)
     showCaptions = value(.showCaptions, d.showCaptions)
+    hotKey = value(.hotKey, d.hotKey)
   }
 
   private enum CodingKeys: String, CodingKey {
     case dshOpacity, otherOpacity, proximityFade, keepProminent, hideInFullscreen, hideInMissionControl
     case hideInAppLauncher, hiddenApps, tier, followReduceMotion, dockToStrip, positions, lastTarget
-    case historyExpanded, showCaptions
+    case historyExpanded, showCaptions, hotKey
   }
 }
 

@@ -13,6 +13,8 @@ public struct VisibilityInput: Sendable {
   public var prominent: Bool
   /// Collapsed into the edge strip, which is too thin to read when faded.
   public var strip = false
+  /// Explicit user input remains visible even when the ambient orb would hide.
+  public var inputOpen = false
   public var settings: PanelSettings
 
   public init(frontBundleID: String?, fullscreen: Bool, appLauncher: Bool, cursorDistance: Double?,
@@ -47,6 +49,7 @@ public enum VisibilityPolicy {
   public static let stripFloor = 0.8
 
   public static func evaluate(_ i: VisibilityInput) -> VisibilityOutput {
+    if i.inputOpen { return VisibilityOutput(hidden: false, opacity: 1) }
     let s = i.settings
     let front = i.frontBundleID ?? ""
     let hidden = (s.hideInFullscreen && i.fullscreen)

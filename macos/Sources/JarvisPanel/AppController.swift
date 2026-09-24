@@ -15,6 +15,8 @@ final class AppController: NSObject {
   private let orb: OrbPanel
   private var overlay: OverlayPanel!
   private var settingsWindow: NSWindow?
+  private var hotKey: HotKey?
+  private var hotKeyError: String?
 
   /// Edge the orb is snapped to (kept even when strips are turned off).
   private var snapped: DockEdge?
@@ -73,6 +75,12 @@ final class AppController: NSObject {
     if let snapshotDir, let demo {
       Task { await Snapshotter(controller: self, demo: demo, dir: snapshotDir).run() }
       return
+    }
+
+    hotKey = HotKey { [weak self] spec in self?.hotKeyPressed(spec) }
+    if hotKey?.replace(with: store.settings.hotKey.flatMap(HotKeySpec.init) ?? .default) != true {
+      hotKeyError = "快捷键被占用"
+      Log.write("hotkey registration failed")
     }
 
     installMonitors()
@@ -439,15 +447,43 @@ final class AppController: NSObject {
 
   // MARK: Quick bar
 
+  private func hotKeyPressed(_ spec: HotKeySpec) {
+    if let recorder = NSApp.keyWindow?.firstResponder as? HotKeyRecorderButton, recorder.recording {
+      recorder.record(spec)
+      return
+    }
+    let focused = overlay.isKeyWindow && overlay.firstResponder is PlaceholderTextView
+    switch InputHotKeyAction.resolve(inputOpen: model.quickBarOpen, inputFocused: focused) {
+    case .open:
+      model.openQuickBar()
+      modelChanged()
+    case .close:
+      model.closeQuickBar()
+      modelChanged()
+    case .focus:
+      focusQuickInput()
+    }
+  }
+
+  private func focusQuickInput() {
+    updateVisibility()
+    overlayHideWork?.cancel()
+    overlay.makeKeyAndOrderFront(nil)
+    overlayState.focusToken += 1
+  }
+
+  func stop() {
+    hotKey?.invalidate()
+    hotKey = nil
+  }
+
   private func quickBarOpened() {
     setTracking(true)
     openStrip()
     layout()
     overlayState.showHover = false
     overlayState.showTargets = false
-    overlayHideWork?.cancel()
-    overlay.makeKeyAndOrderFront(nil)
-    overlayState.focusToken += 1
+    focusQuickInput()
   }
 
   private func quickBarClosed() {
@@ -478,6 +514,7 @@ final class AppController: NSObject {
       interacting: model.quickBarOpen || dragging, prominent: model.appearance.tint != .cyan,
       settings: store.settings)
     input.strip = stripEdge != nil && !stripOpen
+    input.inputOpen = model.quickBarOpen
     let out = VisibilityPolicy.evaluate(input)
 
     if out.hidden != hidden {
@@ -565,7 +602,13 @@ final class AppController: NSObject {
     if settingsWindow == nil {
       let settingsModel = SettingsModel(store: store,
                                         onChange: { [weak self] in self?.applySettings() },
-                                        onResetPosition: { [weak self] in self?.resetPosition() })
+                                        onResetPosition: { [weak self] in self?.resetPosition() },
+                                        hotKeyError: hotKeyError,
+                                        onHotKeyChange: { [weak self] spec in
+        guard let self, hotKey?.replace(with: spec) == true else { return false }
+        hotKeyError = nil
+        return true
+      })
       let host = NSHostingController(rootView: SettingsView(model: settingsModel))
       let window = NSWindow(contentViewController: host)
       window.title = "贾维斯设置"

@@ -29,5 +29,11 @@ let package = Package(
       path: "Tests/JarvisPanelCoreTests",
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
+    .testTarget(
+      name: "JarvisPanelHotKeyTests",
+      dependencies: ["JarvisPanel", "JarvisPanelCore"],
+      path: "Tests/JarvisPanelHotKeyTests",
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
   ]
 )

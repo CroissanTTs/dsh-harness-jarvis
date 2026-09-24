@@ -22,6 +22,7 @@ final class SettingsModel: ObservableObject {
         current.followReduceMotion = s.followReduceMotion
         current.dockToStrip = s.dockToStrip
         current.showCaptions = s.showCaptions
+        current.hotKey = s.hotKey
       }
       onChange()
     }
@@ -29,13 +30,27 @@ final class SettingsModel: ObservableObject {
 
   private let store: SettingsStore
   private let onChange: () -> Void
+  private let onHotKeyChange: (HotKeySpec) -> Bool
+  @Published var hotKeyError: String?
   let onResetPosition: () -> Void
 
-  init(store: SettingsStore, onChange: @escaping () -> Void, onResetPosition: @escaping () -> Void) {
+  init(store: SettingsStore, onChange: @escaping () -> Void, onResetPosition: @escaping () -> Void,
+       hotKeyError: String?, onHotKeyChange: @escaping (HotKeySpec) -> Bool) {
     self.store = store
     self.onChange = onChange
     self.onResetPosition = onResetPosition
+    self.hotKeyError = hotKeyError
+    self.onHotKeyChange = onHotKeyChange
     settings = store.settings
+  }
+
+  func setHotKey(_ spec: HotKeySpec) {
+    guard onHotKeyChange(spec) else {
+      hotKeyError = "快捷键被占用"
+      return
+    }
+    hotKeyError = nil
+    settings.hotKey = spec == .default ? nil : spec.displayString
   }
 }
 
@@ -44,6 +59,17 @@ struct SettingsView: View {
 
   var body: some View {
     Form {
+      Section("快捷键") {
+        LabeledContent("呼出输入框") {
+          HotKeyRecorder(value: model.settings.hotKey ?? HotKeySpec.default.displayString,
+            onRecord: model.setHotKey,
+            onInvalid: { model.hotKeyError = "请使用修饰键和字母、数字或功能键组合" })
+            .frame(width: 205, height: 28)
+        }
+        if let error = model.hotKeyError {
+          Text(error).font(.caption).foregroundStyle(.red)
+        }
+      }
       Section("显示") {
         opacitySlider("DSH 在前台时", value: $model.settings.dshOpacity)
         opacitySlider("其他应用在前台时", value: $model.settings.otherOpacity)

@@ -10,7 +10,7 @@
 2. **实现**：照条目里的「实现逻辑」「验收标准」「测试」做。条目写的是推荐方案；遇到条目没覆盖的情况，按「2. 通用约定」处理，并在该条目的「实现记录」里写清你做了什么决定。
 3. **完成**：测试全绿、构建通过后提交，把状态改为「已完成（提交号）」，在「实现记录」写一两句要点（改了哪些文件、偏离条目的地方）。
 4. **别改别人的条目**。发现条目写错或缺信息，在条目末尾「实现记录」里留言，由维护人修订正文。
-5. 标了「⚠ 待用户拍板」的决策，按「推荐默认」实现即可；若用户已拍板，以「6. 决策记录」为准。
+5. 标了「⚠ 待用户拍板」的决策，按「推荐默认」实现即可；若用户已拍板，以「10. 决策记录」为准。
 
 ## 1. 总览
 
@@ -32,10 +32,20 @@
 | J7 | 拦截托管会话的提问（低风险自答，默认关） | M2、J2 的 LLM 助手 | 中 | 待办 |
 | J8 | 清理：过期注释、残留字段、SPEC 同步 | — | 小 | 待办 |
 | Q1 | 真机验收清单（人工） | — | 小 | 待办 |
+| U1 | 面板显示播报字幕（§12 口播内容） | — | 中 | 待办 |
+| U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 待办 |
+| H1 | 全局快捷键呼出输入框 | — | 中 | 待办 |
+| S0 | 语音输入技术验证（权限、本机识别） | — | 小 | 待办 |
+| S1 | 按住说话（语音输入） | S0、H1 | 大 | 待办（等 S0 结论） |
+| P0 | 审批"总是允许"预设 | J3 | 中 | 待办 |
+| P1 | 分级自动审批（Phase-2，默认关） | J3、P0、J6 | 大 | 待办 |
+| M7 | L3 摘要（pass D） | M3 | 中 | 条件触发（别认领） |
+| A1 | 多个贾维斯化身 | J2、J4 | 大 | 条件触发（别认领） |
+| X1 | 移植到其他平台 | — | — | 不做（仅记录结论） |
 
-**可并行的组**：`J0`、`J1→J2→J4/J5`、`J3`、`M1→M2→M6`、`M1→M3`、`J8` 互不冲突。`J2` 与 `J3` 都会改 `src/index.ts` 的事件监听区，合并时注意冲突。
+**可并行的组**：`J0`、`J1→J2→J4/J5/U2`、`J3→P0→P1`、`M1→M2→M6`、`M1→M3`、`J8`、`U1`、`H1`、`S0` 互不冲突。`J2` 与 `J3` 都会改 `src/index.ts` 的事件监听区，`H1` 与 `S1` 都会改 `AppController.swift`，合并时注意冲突。
 
-**不在本清单（规格明确放到以后）**：语音输入（STT、唤醒词）、Phase-2 四级自动审批、全局快捷键、多化身、跨平台移植、L3 摘要（pass D）。
+**状态说明**：「条件触发」= 设计已写好，但要等条目里写的触发条件出现才值得做，维护人确认后改为待办；「不做」= 只记录结论，防止重复讨论。唤醒词（常驻麦克风）规格明确不做，不列条目。
 
 ## 2. 通用约定
 
@@ -350,7 +360,148 @@
 - 发现问题记到本条「实现记录」，维护人拆成新条目。
 - **实现记录**：（空）
 
-## 6. 决策记录
+## 6. 条目详情：面板体验
+
+### U1 面板显示播报字幕
+
+- **目的**：§12 要求面板显示"贾维斯在说什么"。现在 `/jarvis/state` 的 `voice` 只有 `speaking/source/sessionId`，没有文字，嘈杂环境或静音时用户不知道他说了什么。
+- **数据链路**：
+  1. voice-mini（`../dsh-voice-mini/src/index.ts`）：`SpeechSignal` 加可选字段 `text`，`reportSpeech(item)` 在 `phase:'start'` 时带上 `item.text`（播报的原文，已经过 `scrubForSpeech`）。纯提示音（chime，text 为空）不带。
+  2. 贾维斯 `src/live-state.ts`：`SpeechSignal`、`Speech` 加 `text?: string`；`speechSignal(raw)` 校验为字符串、去首尾空白、截断 120 字；`speech()` 返回时带上。
+  3. 内置 TTS 分支（没装 voice-mini 时 `speakAsJarvis` 走 edge-tts + afplay）：播放前后调用 `live.speechSignal({phase:'start'/'end', id, source:'jarvis', text})`，让两条路径表现一致。
+  4. `/jarvis/state` 的 `voice` 加 `text`（仅 speaking 时有）。
+  5. 面板 `Snapshot.swift`：`VoiceState` 加 `text: String?`，与 `source` 一样只在 speaking 时保留；旧宿主没有该字段时为 nil。
+- **界面**：
+  - 说话时在光球旁显示一行字幕气泡（最多两行，超出省略号），颜色跟随说话来源（青 = 贾维斯，紫 = 其他会话），其他会话说话时前缀会话名（用 `PanelModel.label(for:)` 的消歧名称）。
+  - 播报结束后保留 1.5 秒再淡出；新一句到来直接替换。
+  - 快捷输入框打开时字幕显示在输入框上方的历史区域顶部，不另开气泡，避免遮挡。
+  - 面板设置加开关 `showCaptions`（默认开），放在 `PanelSettings` 里持久化。
+  - 系统"减少动态效果"时不做淡入淡出，直接显隐。
+- **测试**：
+  - 插件：`speechSignal` 的 text 处理（正常、恰好 120 / 121 字、空白串、非字符串、缺失）。
+  - 面板 Core：`VoiceState` 解码（有 text、没 text、非 speaking 时 text 被丢弃、text 类型错误）；字幕显示逻辑抽成纯函数 `caption(for voice, now, lastEnd) -> Caption?`，覆盖 1.5 秒保留边界、来源切换、关闭开关。
+  - 快照：`Snapshotter` 加场景 `16-caption-jarvis`、`17-caption-session`，DemoAPI 的 narrating 场景补上 text。
+- **注意**：跨仓库改动，voice-mini 单独提交；voice-mini 未更新时面板只是不显示字幕，不能报错。
+- **实现记录**：（空）
+
+### U2 目标列表显示任务进度
+
+- **目的**：交给贾维斯的任务现在处于什么状态，面板上看不到。J1/J2 有了任务台账和判断结果后，在目标列表里显示出来。
+- **数据**：`/jarvis/state` 的每个 session 行加 `task`：`{ status: 'open'|'judging'|'unsatisfied', summary?: string }`，只输出未结任务（done/dropped 不输出）。`summary` 取 `lastVerdict.missing` 或请求原文前 30 字。
+- **面板**：`SessionInfo` 加 `task: TaskInfo?`（解码容错：缺失或类型错误为 nil）。目标列表行在标题右侧显示小标签："进行中" / "判断中" / "未完成"（未完成用黄色），悬停显示 summary。
+- **测试**：插件侧 state 行组装抽纯函数测试；面板侧解码与标签文案三段式；快照加 `18-targets-task-state`。
+- **实现记录**：（空）
+
+### H1 全局快捷键呼出输入框
+
+- **目的**：不用找光球，在任何应用里按快捷键就能给贾维斯打字。
+- **实现**：
+  - 用 Carbon `RegisterEventHotKey`，**不要**用 `NSEvent.addGlobalMonitorForEvents(.keyDown)`（后者需要辅助功能权限，前者不需要）。
+  - 新文件 `macos/Sources/JarvisPanel/HotKey.swift` 封装注册/注销；纯逻辑放 Core：`HotKeySpec { keyCode, modifiers }`，支持与显示字符串互转（如 `"⌃⌥J"`），存到 `PanelSettings.hotKey: String?`（nil = 用默认值）。
+  - 默认 `⌃⌥J`（⌥Space、⌃Space 常被输入法占用）。设置页加录制控件：点一下后按下新组合即保存；注册失败（被别的应用占用）时在设置页提示"快捷键被占用"并保留旧值。
+  - 行为：输入框关着 → 打开并聚焦输入；开着且聚焦 → 关闭。
+  - 光球因全屏/启动台/隐藏应用而隐藏时，按快捷键**仍然打开**输入框（用户明确要用）。需要在 `VisibilityPolicy` 里加"输入框打开时强制可见"，关闭后恢复原规则。
+- **测试**：`HotKeySpec` 解析与格式化（等价类：单修饰键/多修饰键；边界：无修饰键应拒绝、F 键、数字键；异常：空串、未知符号）；`VisibilityPolicy` 强制可见的组合情况。
+- **实现记录**：（空）
+
+## 7. 条目详情：语音输入
+
+> 规格 §6 原计划在 DSH 宿主端做语音识别，需要 `danger-full-access`，和"不开高危权限"冲突，所以放到了以后。面板现在是原生 macOS 程序，可以直接用系统的本机语音识别（Speech 框架），麦克风权限由系统授权，**不需要给 DSH 开任何高危权限**。这是推荐路线，但有打包问题要先验证（S0）。
+
+### S0 语音输入技术验证
+
+- **要回答的问题**：
+  1. 面板是 SwiftPM 编出的裸可执行文件、由插件 `spawn` 启动（没有 .app 包）。调用 `AVAudioEngine` 录音时，系统麦克风授权弹窗会不会出现？授权记在谁名下（DSH 还是 jarvis-panel）？
+  2. `SFSpeechRecognizer.requestAuthorization` 要求 Info.plist 里有 `NSSpeechRecognitionUsageDescription`，否则进程直接崩溃。裸可执行文件能否通过链接参数嵌入 Info.plist（`linkerSettings: .unsafeFlags(["-Xlinker","-sectcreate","-Xlinker","__TEXT","-Xlinker","__info_plist","-Xlinker","Resources/Info.plist"])`）解决？
+  3. 用户这台机器上 `SFSpeechRecognizer(locale: zh-CN).supportsOnDeviceRecognition` 是否为 true；设 `requiresOnDeviceRecognition = true` 后识别质量和延迟如何（录 3 句普通话、1 句中英混杂的技术术语）。
+- **做法**：给面板加隐藏启动参数 `--stt-probe`：申请权限 → 录 5 秒 → 本机识别 → 把每一步结果写到 `~/.dsh/jarvis/stt-probe.log` 后退出。分别在"终端直接运行"和"由插件启动"两种方式下各跑一次。
+- **产出**：在本条「实现记录」写清三个问题的答案，并给出 S1 走哪条路：
+  - A：面板内直接用 Speech 框架（嵌入 Info.plist 即可）。
+  - B：把面板打包成 `.app`（`build.sh` 生成 bundle，插件改用 `open -a` 启动），权限记在 jarvis-panel 名下。
+  - C：本机识别不可用时，退回规格原方案（宿主端 SenseVoice/whisper），需要用户同意开权限，维护人会先和用户确认。
+- **注意**：探针代码验证完就删掉，不要留在正式构建里（Info.plist 嵌入如果走 A 路线则保留）。
+- **实现记录**：（空）
+
+### S1 按住说话
+
+- **前置**：S0 结论为 A 或 B；H1（复用快捷键机制）。
+- **触发**：
+  - 按住语音快捷键（默认 `⌃⌥K`，可在设置里改）说话，松开结束。
+  - 输入框里加一个麦克风按钮：点一下开始，再点一下或静音 2 秒自动结束。
+  - 不做光球长按（和拖动冲突）。
+- **流程**：
+  1. 开始：如果贾维斯或 voice-mini 正在播报，先调 `POST /jarvis/voice {action:'pause'}` 暂停，避免把自己的声音录进去；结束后恢复（只恢复自己暂停的，用户本来就暂停的不动）。
+  2. 录音中：光球进入"聆听"表现（复用 awaiting 外观 + 把音量 RMS 喂给 `ParticleSim` 的能量参数）；输入框实时显示识别中的文字（partial results）。
+  3. 结束：最终文字填进输入框，**默认不自动发送**，用户按回车确认（设置 `voiceAutoSend` 默认关，可打开）。目标沿用当前选中的对话对象。
+  4. Esc 取消，丢弃文字。
+- **限制**：单次最长 60 秒；按下后不到 200 毫秒就松开视为误触，忽略；识别结果为空时提示"没听清"。
+- **隐私**：只在按住期间录音；音频不落盘；`requiresOnDeviceRecognition = true`，不支持本机识别时报错提示，**不回退到云端识别**（见决策 D5）。
+- **Core 纯逻辑**：`DictationMachine` 状态机：`idle → requesting → listening → finishing → idle`，外加 `denied`、`failed`。事件：press、release、partial、final、error、cancel、timeout。
+- **测试**（Core 三段式）：
+  - 等价类：正常按住-说话-松开；点按模式；自动发送开/关。
+  - 边界：199/200 毫秒误触阈值；恰好 60 秒超时；静音 2 秒边界；空识别结果。
+  - 异常：权限被拒；识别中途出错；录音中切换目标（文字保留，发给新目标）；录音中输入框被关闭（取消录音并恢复播报）。
+- **实现记录**：（空）
+
+## 8. 条目详情：分级自动审批（Phase-2）
+
+> 规格 §11 Phase-2。核心原则不变：**贾维斯永不自动批准高危操作**；整个功能默认关闭，用户在设置里主动打开。
+
+### P0 审批"总是允许"预设
+
+- **目的**：给用户一个明确的放行出口（规格里的 preset），也是 P1 判断时的最高依据。
+- **界面**：面板审批卡片在"批准 / 拒绝"之外加一个次级按钮"总是允许（此工作区）"。点击 = 本次批准 + 写一条预设。
+- **协议**：`POST /jarvis/pending/answer` 的 `decision` 新增 `'always'`；插件按 allow 处理，并调用 `presets.add(...)`。
+- **存储**：`~/.dsh/jarvis/memory/preferences/approvals.json`（结构化 JSON，不用 HTML，便于精确匹配）：`[{ fingerprint, tool, workspace, createdAt, expiresAt? }]`。匹配规则：同 tool、同 workspace（cwd 完整路径）、fingerprint 完全相同。
+- **管理**：贾维斯工具 `list_approval_rules` / `remove_approval_rule`；面板设置页列出预设并可删除。
+- **护栏**：P1 的高危分类命中时**不允许**创建预设（按钮不显示），避免"总是允许 rm -rf"。
+- **测试**：匹配（同指纹不同工作区不命中、过期不命中）、写入失败不影响本次批准、高危时按钮隐藏（面板 Core 纯逻辑）。
+- **实现记录**：（空）
+
+### P1 分级自动审批
+
+- **新文件**：`src/approval-tier.ts`（纯）：`classify({ tool, command, path, cwd }) → 'safe' | 'grey' | 'medium' | 'high'`。
+  - **safe**：只读工具（读文件、搜索、列目录）；bash 命令首词在白名单：`ls cat head tail wc rg grep find pwd echo which git(status|diff|log|show|branch)` 且不含重定向 `>`、管道到 shell、`;`/`&&` 串接其他命令。
+  - **high**：`rm -rf`/`rm -r`、`sudo`、`git push --force`/`-f`、`git reset --hard`、`git clean -fd`、`chmod -R`/`chown -R`、`curl|wget … | sh/bash`、`mkfs`、`dd`、写入工作区之外的路径、`DROP TABLE`/`DROP DATABASE`、`kill -9 1`、`launchctl`、修改 `~/.ssh`、`~/.dsh` 配置。
+  - **medium**：会写入或产生外部影响的：写文件、`npm/pnpm/pip install`、`git commit/push`（非 force）、`mv`、网络请求。
+  - **grey**：以上都不命中的。
+  - 规则表写成常量数组，便于 J6 设置页以后暴露。
+- **决策**（`decide(req)`，在 `approval/request` 监听里 `holdApproval` 之前执行）：
+  | 分级 | 自动审批关 | `autoApprove='safe'` | `autoApprove='safe+grey'` |
+  |---|---|---|---|
+  | safe | 转给你 | 直接批准 | 直接批准 |
+  | grey | 转给你 | 转给你 | 模型判断：allow 且置信 ≥ 0.9 → 批准；deny → 转给你（附上理由）；其余 → 转给你 |
+  | medium | 转给你 | 转给你 | 转给你；若命中 P0 预设或同指纹有 ≥2 次你批准且从未拒绝 → 批准 |
+  | high | 转给你 | 转给你 | 仅命中 P0 预设才批准（P0 本身禁止高危预设，所以实际上永远转给你） |
+  - 模型判断用 J2 的 `oneShot`，输入：操作、分级、会话任务上下文（J1 台账）、同指纹历史记录（J3 文件）。
+  - **不会自动拒绝**，最坏情况是转给你（见决策 D6）。
+- **可见性**：
+  - 每次自动批准都写 J3 审批记录，`decision source="jarvis"`、`tier` 填分级。
+  - grey 被自动批准时贾维斯播报一句（"替 hammer 批准了 npm test"）；safe 不播报。
+  - 面板悬停层显示最近 5 条自动批准，可点"撤销此规则"（删除对应 P0 预设）。
+- **配置**：`autoApprove: 'off' | 'safe' | 'safe+grey'`，默认 `'off'`，走 J6 设置页。
+- **测试**（大量表驱动）：`classify` 每类至少 10 个正例与易混淆反例（如 `git push` vs `git push -f`、`rm file` vs `rm -rf dir`、`cat a > b`、`ls; rm -rf x`、`echo $(curl …|sh)`）；`decide` 覆盖上表每个格子；模型超时/非法输出一律转给你；写入工作区外路径的判断（符号链接、`..`、`~`）。
+- **实现记录**：（空）
+
+## 9. 条目详情：条件触发 / 不做
+
+### M7 L3 摘要（pass D）——条件触发
+
+- **触发条件**：出现"需要把某会话的近期情况注入某个上下文"的真实需求，例如 J2 判断时发现仅凭最终回复经常判错，需要本轮过程摘要。
+- **设计**：temp 老化进窗口后压成摘要，存 `cache/summaries/<sessionId>/<date>.json`，非破坏（不删 temp），按 temp 文件修改时间缓存，不每轮重算。模型调用复用 `oneShot`。
+- **实现记录**：（空）
+
+### A1 多个贾维斯化身——条件触发
+
+- **触发条件**：J2 上线后，贾维斯单一会话经常积压（例如多个"未满足"通知排队、你的输入要等他处理完别的通知才响应）。
+- **设计**：`agentLoop.createAgent` 按需创建 `jarvis-2…` 化身，共享同一套工具和托管集；输入按目标会话分配给固定化身；记忆锁已按 store 设计（M1），无需改动；输出协调（J4）改为跨化身共享一个实例。面板仍只显示一个贾维斯。
+- **实现记录**：（空）
+
+### X1 移植到其他平台——不做
+
+- 结论见 SPEC §17：Cursor、Codex 没有"向会话注入消息"和"接管审批"的公开接口，只能包 CLI 进程做降级版。当前不投入；若以后要做，先单独立项调研。
+
+## 10. 决策记录
 
 | 编号 | 问题 | 推荐默认 | 状态 |
 |---|---|---|---|
@@ -358,8 +509,11 @@
 | D2 | 判断为"满足"时，是插件直接播报，还是唤醒贾维斯让它说？ | 插件直接播报（不花贾维斯一轮模型调用）；只有"不满足"才唤醒贾维斯 | ✅ 用户已拍板，按推荐（2026-09-24） |
 | D3 | 托管会话要不要在 DSH 标题里加"贾维斯-"前缀？ | 不加。`rename` 会钉住标题、让 DSH 不再自动命名，破坏用户自己的标题；面板里已经把托管会话单独列出，足够区分。配置项 `titlePrefix` 保留给以后"贾维斯自己创建的会话" | ✅ 用户已拍板，按推荐（2026-09-24） |
 | D4 | 记忆系统做到哪一步？ | 先做 M1–M3 + M6（能记、能查、自动留底），M4/M5 等用一段时间再定 | ✅ 用户已拍板，按推荐（2026-09-24）；M4、M5 暂缓 |
+| D5 | 语音识别在本机识别不可用时，能否退回云端识别？ | 不能。只用本机识别，不可用就提示，音频永远不出本机 | ⚠ 待用户拍板 |
+| D6 | 分级自动审批里，高危且无预设的操作怎么处理？（SPEC §11 原文是"默认拒绝并告知"） | 转给你决定，贾维斯不自动拒绝也不自动批准。自动拒绝会让会话莫名失败，而转给你同样安全 | ⚠ 待用户拍板 |
 
-## 7. 变更日志
+## 11. 变更日志
 
+- 2026-09-24：补齐剩余条目：U1 播报字幕（盘点发现 `VoiceState` 没有文字，§12 未兑现）、U2 任务进度、H1 全局快捷键、S0/S1 语音输入（改为面板本机识别路线，避免给 DSH 开高危权限）、P0/P1 分级自动审批、M7/A1 条件触发、X1 不做；新增决策 D5、D6。J1 已由其他会话完成（`b00e4ab`）。
 - 2026-09-24：用户拍板 D1–D4，全部按推荐默认；M4、M5 改为暂缓。
 - 2026-09-24：初版。依据 SPEC.md 与 `feb29ab` 时的代码盘点；核实了 DSH 标题服务只有 `rename`（J0 的来源）、voice-mini 会在每个会话 turn/end 总结播报（J5/D1 的来源）。

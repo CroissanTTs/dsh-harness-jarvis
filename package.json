@@ -1,12 +1,12 @@
 {
   "name": "dsh-harness-jarvis",
-  "version": "0.1.0",
-  "description": "A DSH Desktop plugin for coordinating managed sessions, approvals, spoken updates, and local memory.",
+  "version": "0.7.1",
+  "description": "A floating desktop assistant for DSH Desktop — a particle orb for quick permission approvals and fast floating conversations, with optional session coordination.",
   "license": "MIT",
   "author": "zane",
   "keywords": [
-    "deepseek", "dsh", "harness", "jarvis", "commander",
-    "agent", "multi-session", "approval", "memory", "voice", "tts"
+    "deepseek", "dsh", "harness", "jarvis", "assistant",
+    "agent", "multi-session", "approval", "memory", "voice", "tts", "orb"
   ],
   "type": "module",
   "main": "./lib/index.js",
@@ -23,6 +23,7 @@
     "scripts/synth-edge.mjs",
     "scripts/readme-config.mjs",
     "docs/images",
+    "docs/design",
     "docs/superpowers/plans/2026-09-24-jarvis-backlog.md"
   ],
   "engines": { "node": ">=20" },

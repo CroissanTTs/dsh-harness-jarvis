@@ -1,0 +1,244 @@
+<style>
+  .phasebar { display:flex; align-items:center; gap:14px; margin: 4px 0 18px; font-size: 0.9rem; }
+  .phasebar .dots { display:flex; gap:6px; }
+  .phasebar .dot { width:8px; height:8px; border-radius:50%; background: var(--bg-tertiary); transition: background .2s; }
+  .phasebar .dot.on { background: var(--accent); }
+  .bgswitch { display:flex; gap:8px; align-items:center; margin-bottom: 14px; font-size: 0.85rem; }
+  .bgswitch button { border:1px solid var(--border); background: var(--bg-secondary); color: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .bgswitch button.on { border-color: var(--accent); color: var(--accent); }
+  .stage { position:relative; aspect-ratio: 1 / 1; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .stage canvas.big { width: 78%; height: 78%; }
+  .stage canvas.small { position:absolute; right:10px; bottom:10px; width:72px; height:72px; }
+  .stage .tag { position:absolute; right:10px; bottom:86px; font-size:10px; opacity:.6; }
+  .stage.dark { background: radial-gradient(circle at 30% 20%, #1a2340 0%, #070a14 70%); color:#cfd8ea; }
+  .stage.light { background: linear-gradient(160deg, #f4f6fa, #dfe5ee); color:#445; }
+  .stage.busy { color:#445; background:
+      linear-gradient(90deg, transparent 0 8%, rgba(60,120,220,.18) 8% 34%, transparent 34%),
+      repeating-linear-gradient(180deg, #fafafa 0 13px, #d9dde3 13px 15px); }
+</style>
+
+<h2>贾维斯形象 · 视觉方向</h2>
+<p class="subtitle">三个方向用的是同一套粒子结构：六边形核心 → 扩散到一环 → 二次扩散到二环 → 在两环之间呼吸 → 收回。区别只在色系和 HUD 装饰的多少。每张卡片右下角的小图是悬浮窗的实际尺寸（72px）。</p>
+
+<div class="phasebar"><strong>当前阶段：</strong><span id="ph-label"></span><div class="dots" id="ph-dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div>
+
+<div class="bgswitch">背景（悬浮窗会叠在任意内容上）：
+  <button data-bg="dark" class="on">深色桌面</button>
+  <button data-bg="light">浅色桌面</button>
+  <button data-bg="busy">杂乱窗口</button>
+</div>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image stage dark"><canvas class="big" data-style="a"></canvas><span class="tag">实际尺寸</span><canvas class="small" data-style="a"></canvas></div>
+    <div class="card-body">
+      <h3>A · 全息青</h3>
+      <p>电影里贾维斯 HUD 的青蓝色。以粒子为主，只加一层很淡的六边形轮廓和环线。在科技感和克制之间取平衡。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image stage dark"><canvas class="big" data-style="b"></canvas><span class="tag">实际尺寸</span><canvas class="small" data-style="b"></canvas></div>
+    <div class="card-body">
+      <h3>B · 反应堆金</h3>
+      <p>钢铁侠头盔 HUD 的琥珀金，加上旋转刻度环和弧段。最有电影感，但存在感也最强。</p>
+    </div>
+  </div>
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image stage dark"><canvas class="big" data-style="c"></canvas><span class="tag">实际尺寸</span><canvas class="small" data-style="c"></canvas></div>
+    <div class="card-body">
+      <h3>C · 冷白极简</h3>
+      <p>低饱和的冷白色，只有粒子，没有线条。最不打扰，科技感主要靠动效本身撑起来。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const STYLES = {
+    a: { color: [92, 225, 255], n: 900, glow: 1.0, alpha: 0.85, size: 1.25, hud: 'light' },
+    b: { color: [255, 184, 76], accent: [255, 110, 70], n: 900, glow: 1.0, alpha: 0.85, size: 1.25, hud: 'heavy' },
+    c: { color: [225, 236, 255], n: 650, glow: 0.55, alpha: 0.8, size: 1.1, hud: 'none' },
+  };
+  const LOOP = 11;
+  const BREATH = (2 * Math.PI) / 1.4;
+  const HR = 0.30, R1 = 0.62, R2 = 0.86;
+
+  const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const clamp = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+  function phase(t) {
+    const u = t % LOOP;
+    if (u < 2.5) return { s: 0, label: '待机：粒子聚在六边形核心里', i: 0 };
+    if (u < 3.7) return { s: ease((u - 2.5) / 1.2), label: '激活：粒子向外扩散成一环', i: 1 };
+    if (u < 4.9) return { s: 1 + ease((u - 3.7) / 1.2), label: '二次扩散：扩到更大的二环', i: 2 };
+    if (u < 9.3) return { s: 1.5 + 0.5 * Math.cos(BREATH * (u - 4.9)), label: '说话：在两环之间往复呼吸', i: 3 };
+    const s0 = 1.5 + 0.5 * Math.cos(BREATH * 4.4);
+    return { s: s0 * (1 - ease((u - 9.3) / 1.7)), label: '收回：回到六边形核心', i: 4 };
+  }
+
+  function inHex(x, y) {
+    const ax = Math.abs(x), ay = Math.abs(y), r3 = Math.sqrt(3);
+    return ay <= r3 / 2 && r3 * ax + ay <= r3;
+  }
+  function hexVertex(k) { const a = (Math.PI / 3) * k; return [Math.cos(a), Math.sin(a)]; }
+
+  function makeParticles(n) {
+    const out = [];
+    const nOut = Math.floor(n * 0.72);
+    for (let i = 0; i < n; i++) {
+      let hx, hy;
+      if (Math.random() < 0.28) {
+        const k = Math.floor(Math.random() * 6), f = Math.random();
+        const [x0, y0] = hexVertex(k), [x1, y1] = hexVertex(k + 1);
+        hx = x0 + (x1 - x0) * f; hy = y0 + (y1 - y0) * f;
+      } else {
+        do { hx = Math.random() * 2 - 1; hy = Math.random() * 2 - 1; } while (!inHex(hx, hy));
+      }
+      const isOut = i < nOut;
+      const th = isOut ? (i / nOut) * Math.PI * 2 + (Math.random() - 0.5) * 0.02 : 0;
+      out.push({
+        hx, hy, out: isOut, th,
+        rj: (Math.random() + Math.random() - 1) * 0.03,
+        d: isOut ? (th / (Math.PI * 2)) * 0.3 : 0,
+        sz: 0.6 + Math.random() * 0.9,
+        tw: Math.random() * Math.PI * 2,
+      });
+    }
+    return out;
+  }
+
+  function makeSprite(rgb, hot) {
+    const c = document.createElement('canvas'); c.width = c.height = 32;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    const [r, gg, b] = rgb;
+    gr.addColorStop(0, hot ? 'rgba(255,255,255,1)' : `rgba(${r},${gg},${b},1)`);
+    gr.addColorStop(0.2, `rgba(${r},${gg},${b},0.95)`);
+    gr.addColorStop(0.5, `rgba(${r},${gg},${b},0.22)`);
+    gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+    return c;
+  }
+
+  function hexPath(ctx, cx, cy, R, rot) {
+    ctx.beginPath();
+    for (let k = 0; k <= 6; k++) {
+      const a = rot + (Math.PI / 3) * k;
+      const x = cx + Math.cos(a) * R, y = cy + Math.sin(a) * R;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+  }
+
+  function drawHud(ctx, st, cx, cy, k, t, s, lw) {
+    const [r, g, b] = st.color;
+    const act = Math.min(s, 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineWidth = lw;
+    if (st.hud === 'light' || st.hud === 'heavy') {
+      ctx.strokeStyle = `rgba(${r},${g},${b},${0.28 + 0.12 * act})`;
+      if (st.hud === 'heavy') ctx.setLineDash([k * 0.08, k * 0.035]);
+      hexPath(ctx, cx, cy, k * HR * 1.1, t * 0.12);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (st.hud === 'light') {
+      ctx.strokeStyle = `rgba(${r},${g},${b},${0.10 * act})`;
+      ctx.beginPath(); ctx.arc(cx, cy, k * R1, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, k * R2, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (st.hud === 'heavy') {
+      const [ar, ag, ab] = st.accent;
+      ctx.strokeStyle = `rgba(${r},${g},${b},${0.18 + 0.2 * act})`;
+      for (let i = 0; i < 72; i++) {
+        const a = (i / 72) * Math.PI * 2 - t * 0.05;
+        const r0 = k * (i % 6 === 0 ? 0.94 : 0.97), r1 = k * 1.0;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+        ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+        ctx.stroke();
+      }
+      const arcs = [[0, 0.9, 0.6, st.color], [2.2, 0.5, -0.9, st.accent], [3.8, 1.3, 0.35, st.color]];
+      ctx.lineWidth = lw * 1.8;
+      for (const [a0, len, sp, col] of arcs) {
+        ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.3 + 0.4 * act})`;
+        ctx.beginPath(); ctx.arc(cx, cy, k * 1.04, a0 + t * sp, a0 + t * sp + len); ctx.stroke();
+      }
+    }
+  }
+
+  function draw(o, t, s) {
+    const { ctx, W, st, parts, sprite, sc } = o;
+    const cx = W / 2, cy = W / 2, k = (W / 2) * 0.9;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, W, W);
+    const u = ctx.createRadialGradient(cx, cy, 0, cx, cy, k * 1.1);
+    u.addColorStop(0, 'rgba(4,8,18,0.55)');
+    u.addColorStop(1, 'rgba(4,8,18,0)');
+    ctx.fillStyle = u; ctx.fillRect(0, 0, W, W);
+
+    drawHud(ctx, st, cx, cy, k, t, s, Math.max(0.6, sc) * dpr);
+
+    ctx.globalCompositeOperation = 'lighter';
+    const base = Math.max(0.7, sc * st.size) * dpr;
+    const hr = t * 0.12, rr = t * 0.18;
+    const ch = Math.cos(hr), sh = Math.sin(hr);
+    const s1 = Math.min(s, 1), s2 = Math.max(s - 1, 0);
+    for (const p of parts) {
+      let hx = p.hx * ch - p.hy * sh, hy = p.hx * sh + p.hy * ch;
+      hx = (hx + Math.sin(t * 2 + p.tw) * 0.015) * HR;
+      hy = (hy + Math.cos(t * 1.7 + p.tw) * 0.015) * HR;
+      let x = hx, y = hy;
+      let a = 0.5 + 0.5 * Math.sin(t * 3 + p.tw * 5);
+      if (p.out) {
+        const p1 = ease(clamp((s1 - p.d) / (1 - p.d)));
+        const p2 = ease(clamp((s2 - p.d) / (1 - p.d)));
+        const R = R1 + (R2 - R1) * p2 + p.rj;
+        const ang = p.th + rr + Math.sin(p1 * Math.PI) * 0.5;
+        x = hx + (Math.cos(ang) * R - hx) * p1;
+        y = hy + (Math.sin(ang) * R - hy) * p1;
+        a = a * (1 - p1) + (0.6 + 0.4 * Math.sin(t * 4 + p.tw)) * p1;
+      }
+      const sz = base * p.sz * (1.6 + 2.6 * st.glow);
+      ctx.globalAlpha = a * st.alpha;
+      ctx.drawImage(sprite, cx + x * k - sz / 2, cy + y * k - sz / 2, sz, sz);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  const orbs = [];
+  document.querySelectorAll('canvas[data-style]').forEach((cv) => {
+    const st = STYLES[cv.dataset.style];
+    const css = cv.classList.contains('small') ? 72 : 260;
+    const W = Math.round(css * dpr);
+    cv.width = cv.height = W;
+    orbs.push({
+      ctx: cv.getContext('2d'), W, st, sc: css / 260,
+      parts: makeParticles(cv.classList.contains('small') ? Math.round(st.n * 0.45) : st.n),
+      sprite: makeSprite(st.color, st.hud !== 'none'),
+    });
+  });
+
+  const label = document.getElementById('ph-label');
+  const dots = document.querySelectorAll('#ph-dots .dot');
+  let last = -1;
+  function frame(now) {
+    const t = now / 1000;
+    const ph = phase(t);
+    if (ph.i !== last) {
+      last = ph.i; label.textContent = ph.label;
+      dots.forEach((d, i) => d.classList.toggle('on', i === ph.i));
+    }
+    for (const o of orbs) draw(o, t, ph.s);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  document.querySelectorAll('.bgswitch button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.bgswitch button').forEach((b) => b.classList.toggle('on', b === btn));
+      document.querySelectorAll('.stage').forEach((s) => { s.classList.remove('dark', 'light', 'busy'); s.classList.add(btn.dataset.bg); });
+    });
+  });
+})();
+</script>

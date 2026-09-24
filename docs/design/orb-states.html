@@ -1,0 +1,326 @@
+<style>
+  .row { display:flex; gap:20px; align-items:center; flex-wrap:wrap; margin: 6px 0 14px; font-size: 0.85rem; }
+  .btns { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .btns button { border:1px solid var(--border); background: var(--bg-secondary); color: inherit; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+  .btns button.on { border-color: var(--accent); color: var(--accent); }
+  .btns input[type=range] { width: 140px; }
+  .wrap { display:grid; grid-template-columns: minmax(280px, 1fr) minmax(240px, 360px); gap: 18px; align-items: start; }
+  @media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+  .stage { position:relative; height: 420px; border-radius: 12px; display:flex; align-items:center; justify-content:center; overflow:hidden; border:1px solid var(--border); }
+  .stage canvas.big { width: 300px; height: 300px; }
+  .sizes { margin-top: 14px; height: auto; padding: 18px; gap: 36px; align-items: flex-end; }
+  .sizes div { display:flex; flex-direction:column; align-items:center; font-size:11px; opacity:.85; gap:6px; }
+  .perf { font-size: 0.85rem; font-variant-numeric: tabular-nums; background: var(--bg-secondary); border:1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+  .stage.dark { background: radial-gradient(circle at 30% 20%, #1a2340 0%, #070a14 70%); color:#cfd8ea; }
+  .stage.light { background: linear-gradient(160deg, #f4f6fa, #dfe5ee); color:#445; }
+  .stage.busy { color:#445; background:
+      linear-gradient(90deg, transparent 0 8%, rgba(60,120,220,.18) 8% 34%, transparent 34%),
+      repeating-linear-gradient(180deg, #fafafa 0 13px, #d9dde3 13px 15px); }
+  .desc { background: var(--bg-secondary); border:1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .desc h3 { margin: 0 0 6px; }
+  .desc .when { font-size: 0.8rem; opacity: .7; margin: 0 0 10px; }
+  .desc ul { margin: 0; padding-left: 18px; font-size: 0.85rem; line-height: 1.6; }
+  .legend { margin-top: 14px; font-size: 0.8rem; opacity: .8; line-height: 1.6; }
+</style>
+
+<h2>状态动效 v5 · 所有尺寸共用同一套模拟</h2>
+<p class="subtitle">大图和 72 / 120 / 160px 现在是同一批粒子、同一套运动，只是画在不同大小的画布上。各尺寸之间剩下的差别只来自像素分辨率。</p>
+
+<div class="row">
+  <div class="btns" id="st-btns"></div>
+  <div class="btns"><button id="auto" class="on">自动轮播</button></div>
+</div>
+<div class="row">
+  <div class="btns">粒子数量 <input id="count" type="range" min="200" max="4000" step="50" value="900"> <span id="count-v"></span></div>
+  <div class="perf" id="perf">测量中…</div>
+  <div class="btns" id="bgs">背景：
+    <button data-bg="dark" class="on">深色桌面</button>
+    <button data-bg="light">浅色桌面</button>
+    <button data-bg="busy">杂乱窗口</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div>
+    <div class="stage dark"><canvas class="big" data-css="300"></canvas></div>
+    <div class="stage dark sizes">
+      <div><canvas data-css="72" style="width:72px;height:72px"></canvas>72px</div>
+      <div><canvas data-css="120" style="width:120px;height:120px"></canvas>120px</div>
+      <div><canvas data-css="160" style="width:160px;height:160px"></canvas>160px</div>
+    </div>
+  </div>
+  <div class="desc">
+    <h3 id="d-title"></h3>
+    <p class="when" id="d-when"></p>
+    <ul id="d-list"></ul>
+    <div class="legend">颜色规则不变：平时都是青色，"需要你处理"用琥珀色，"出错"用红色。所有粒子都是独立个体，没有整体旋转，也不会排成条状。</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const TAU = Math.PI * 2, GOLD = Math.PI * (3 - Math.sqrt(5));
+  const COLORS = { cyan: [92, 225, 255], amber: [255, 194, 77], red: [255, 95, 95] };
+  const r0 = 0.4, w = 0.3, r1 = r0 + w;
+  const RING1 = [r0 + 0.02, r1 - 0.02], RING2 = [r1 + 0.02, 0.98], CORE = [0, r0 * 0.93];
+  const clamp = (x, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  const STATES = {
+    idle: {
+      name: '待机', color: 'cyan', region: CORE, retarget: 0.10, hop: TAU, orbit: [0, 0], jitter: 0.012, kMul: 0.55, base: 0.22,
+      when: '什么都没在发生的时候。',
+      list: ['所有粒子回到核心，各自在自己的位置附近悬停、漂移', '偶尔有单个粒子慢慢换到核心里的另一个位置', '亮度偏低，尽量不引人注意'],
+    },
+    await: {
+      name: '等待消息', color: 'cyan', region: RING1, retarget: 0.06, hop: 0.6, orbit: [0.04, 0.3], jitter: 0.008, kMul: 0.8, base: 0.32,
+      when: '打开了输入框等你打字，或者在等某个托管会话回结果。',
+      list: ['粒子沿半径方向各自飞出核心，散布到小环里，核心清空', '每个粒子以自己的速度绕圈，有快有慢，不会整体一起转', '整体节奏平稳，表示"我在听"'],
+    },
+    think: {
+      name: '思考', color: 'cyan', region: RING1, retarget: 1.8, hop: 0.9, orbit: [0, 0], jitter: 0.004, kMul: 1.7, base: 0.2, speedGlow: 1.1,
+      when: '贾维斯正在推理，还没开始说话。',
+      list: ['每个粒子不停地各自挑一个附近的新位置，快速冲过去', '冲刺中的粒子会变亮，停下后变暗，像神经元放电', '同一时刻只有一部分粒子在动，看起来很"忙"但不乱'],
+    },
+    speak: {
+      name: '说话', color: 'cyan', region: 'speak', retarget: 0, hop: 0, orbit: [0.02, 0.1], jitter: 0.006, kMul: 1.3, base: 0.35,
+      when: '贾维斯在口播回复。',
+      list: ['粒子跟着语音音量在小环和大环之间往复，像在呼吸（这里用模拟音量）', '每个粒子弹性不同，有的先到有的后到，形成自然的起伏', '声音越大，粒子推得越远、越亮'],
+    },
+    attention: {
+      name: '需要你处理', color: 'amber', region: RING2, retarget: 0.05, hop: 0.5, orbit: [0.02, 0.08], jitter: 0.006, kMul: 0.9, base: 0.35, beat: true,
+      when: '有托管会话在等审批，或者有问题要你回答。',
+      list: ['粒子各自飞到大环，变成琥珀色', '"咚-咚"两拍：每一拍都给每个粒子一个向外的推力，力度各不相同，然后各自弹回来', '两拍之后停一下，像心跳'],
+    },
+    error: {
+      name: '出错', color: 'red', region: RING1, retarget: 0.7, hop: 0.4, orbit: [0, 0], jitter: 0.004, kMul: 2.0, base: 0.3, noise: 2.6, flicker: true,
+      when: '和宿主插件断开连接，或者任务失败。',
+      list: ['粒子回到小环，变成红色', '每个粒子都受到随机的扰动，各自抖动、乱窜', '亮度不规则闪烁，看起来像"信号不稳定"'],
+    },
+  };
+  const ORDER = ['idle', 'await', 'think', 'speak', 'attention', 'error'];
+
+  function makeSprite(rgb) {
+    const c = document.createElement('canvas'); c.width = c.height = 32;
+    const g = c.getContext('2d'), [r, gg, b] = rgb;
+    const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.16, `rgba(${r},${gg},${b},1)`);
+    gr.addColorStop(0.34, `rgba(${r},${gg},${b},0.35)`);
+    gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+    return c;
+  }
+  const SPRITES = {}; for (const k in COLORS) SPRITES[k] = makeSprite(COLORS[k]);
+
+  function slots(n, [a, b]) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const f = (i + 0.5) / n;
+      out.push({ r: Math.sqrt(a * a + (b * b - a * a) * f), th: (i * GOLD) % TAU });
+    }
+    return out;
+  }
+  function randNear(p, [a, b], hop) {
+    const r = Math.sqrt(a * a + (b * b - a * a) * Math.random());
+    return { r, th: hop >= TAU ? Math.random() * TAU : p.tth + (Math.random() - 0.5) * hop };
+  }
+  function voiceEnv(t) {
+    return clamp(0.5 + 0.34 * Math.sin(t * 9.1) * Math.sin(t * 2.3) + 0.22 * Math.sin(t * 5.7 + 1));
+  }
+
+  function makeParticles(n) {
+    const out = [], sl = slots(n, CORE);
+    for (let i = 0; i < n; i++) {
+      const s = sl[i];
+      out.push({
+        x: Math.cos(s.th) * s.r, y: Math.sin(s.th) * s.r, vx: 0, vy: 0,
+        tr: s.r, tth: s.th, b: 0, om: 0, at: 0, ntr: 0, nth: 0,
+        k: rnd(10, 28), zeta: rnd(0.55, 0.9),
+        ph1: rnd(0, TAU), ph2: rnd(0, TAU), f1: rnd(0.6, 1.6), f2: rnd(0.6, 1.6),
+        tw: rnd(0, TAU), sz: rnd(0.7, 1.3),
+      });
+    }
+    return out;
+  }
+
+  const orbs = [];
+  const sim = { parts: [], phys: 0 };
+  function buildOrbs(nBig) {
+    orbs.length = 0;
+    sim.parts = makeParticles(nBig);
+    document.querySelectorAll('canvas[data-css]').forEach((cv) => {
+      const css = +cv.dataset.css, W = Math.round(css * dpr);
+      cv.width = cv.height = W;
+      orbs.push({ ctx: cv.getContext('2d'), W, css, sc: css / 300, parts: sim.parts });
+    });
+  }
+
+  let cur = 'idle', prevColor = 'cyan', switchT = 0, auto = true, lastAuto = 0, lastT = 0, lastBeat = -1;
+
+  function assign(o, st, t) {
+    const n = o.parts.length;
+    const region = st.region === 'speak' ? RING1 : st.region;
+    const sl = slots(n, region).sort((a, b) => a.th - b.th);
+    const ps = o.parts.map((p) => ({ p, a: (Math.atan2(p.y, p.x) + TAU) % TAU })).sort((a, b) => a.a - b.a);
+    const off = Math.floor(Math.random() * n);
+    ps.forEach(({ p, a }, i) => {
+      const s = sl[(i + off) % n];
+      let th = s.th;
+      while (th - a > Math.PI) th -= TAU;
+      while (a - th > Math.PI) th += TAU;
+      p.ntr = s.r; p.nth = th;
+      p.b = st.region === 'speak' ? (s.r - RING1[0]) / (RING1[1] - RING1[0]) : 0;
+      p.at = t + (a / TAU) * 0.3 + Math.random() * 0.25;
+      const [o0, o1] = st.orbit;
+      p.om = o1 > 0 ? rnd(o0, o1) * (Math.random() < 0.85 ? 1 : -1) : 0;
+    });
+  }
+
+  function setState(k, t) {
+    prevColor = STATES[cur].color;
+    cur = k; switchT = t;
+    assign(sim, STATES[k], t);
+    const s = STATES[k];
+    document.getElementById('d-title').textContent = s.name;
+    document.getElementById('d-when').textContent = '什么时候：' + s.when;
+    document.getElementById('d-list').innerHTML = s.list.map((x) => `<li>${x}</li>`).join('');
+    document.querySelectorAll('#st-btns button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  }
+
+  function step(o, st, t, dt, beatKick) {
+    const env = st.region === 'speak' ? voiceEnv(t) : 0;
+    for (const p of o.parts) {
+      if (p.at && t >= p.at) { p.tr = p.ntr; p.tth = p.nth; p.at = 0; }
+      if (!p.at) {
+        if (st.retarget && Math.random() < st.retarget * dt) { const q = randNear(p, st.region, st.hop); p.tr = q.r; p.tth = q.th; }
+        p.tth += p.om * dt;
+      }
+      let tr = p.tr;
+      if (st.region === 'speak' && !p.at) tr = r0 + w * env + w * (0.05 + 0.9 * p.b);
+      const tx = Math.cos(p.tth) * tr + st.jitter * Math.sin(t * p.f1 + p.ph1);
+      const ty = Math.sin(p.tth) * tr + st.jitter * Math.cos(t * p.f2 + p.ph2);
+      const k = p.k * st.kMul, c = 2 * Math.sqrt(k) * p.zeta;
+      let ax = (tx - p.x) * k - p.vx * c, ay = (ty - p.y) * k - p.vy * c;
+      if (st.noise) { ax += (Math.random() - 0.5) * st.noise * 2; ay += (Math.random() - 0.5) * st.noise * 2; }
+      p.vx += ax * dt; p.vy += ay * dt;
+      if (beatKick) {
+        const d = Math.hypot(p.x, p.y) || 1, f = beatKick * rnd(0.15, 0.45);
+        p.vx += (p.x / d) * f; p.vy += (p.y / d) * f;
+      }
+      const sp = Math.hypot(p.vx, p.vy), vmax = 2.4 * Math.sqrt(st.kMul);
+      if (sp > vmax) { p.vx *= vmax / sp; p.vy *= vmax / sp; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    return env;
+  }
+
+  function draw(o, st, t, cm, env) {
+    const { ctx, W, sc, parts } = o;
+    const cx = W / 2, cy = W / 2, k = (W / 2) * 0.92;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, W, W);
+    const u = ctx.createRadialGradient(cx, cy, 0, cx, cy, k * 1.08);
+    u.addColorStop(0, 'rgba(4,8,18,0.55)'); u.addColorStop(1, 'rgba(4,8,18,0)');
+    ctx.fillStyle = u; ctx.fillRect(0, 0, W, W);
+
+    ctx.globalCompositeOperation = 'lighter';
+    const sA = SPRITES[prevColor], sB = SPRITES[st.color];
+    const px = Math.max(2.4, 9 * sc) * dpr;
+    const ph = t % 1.6;
+    const pulse = st.beat ? Math.exp(-ph * 7) + (ph > 0.28 ? 0.7 * Math.exp(-(ph - 0.28) * 7) : 0) : 0;
+    for (const p of parts) {
+      const sp = Math.hypot(p.vx, p.vy);
+      let a = st.base + 0.18 * Math.sin(t * 2.2 + p.tw * 3) + (st.speedGlow || 0.35) * sp + 0.4 * env + 0.45 * pulse;
+      if (st.flicker) a *= 0.5 + 0.5 * Math.abs(Math.sin(t * (8 + p.f1 * 6) + p.tw));
+      a = clamp(a, 0.08, 1);
+      const sz = px * p.sz;
+      const x = cx + p.x * k - sz / 2, y = cy + p.y * k - sz / 2;
+      if (cm < 1 && sA !== sB) {
+        ctx.globalAlpha = a * (1 - cm); ctx.drawImage(sA, x, y, sz, sz);
+        ctx.globalAlpha = a * cm; ctx.drawImage(sB, x, y, sz, sz);
+      } else {
+        ctx.globalAlpha = a; ctx.drawImage(sB, x, y, sz, sz);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame(now) {
+    const t = now / 1000, dt = Math.min(0.033, Math.max(0.001, t - lastT)); lastT = t;
+    if (auto && t - lastAuto > 4.5) { lastAuto = t; setState(ORDER[(ORDER.indexOf(cur) + 1) % ORDER.length], t); }
+    const st = STATES[cur], cm = clamp((t - switchT) / 0.6);
+    let kick = 0;
+    if (st.beat) {
+      const bi = Math.floor(t / 1.6), ph = t % 1.6;
+      const slot = bi * 2 + (ph >= 0.28 ? 1 : 0);
+      if (slot !== lastBeat) { kick = ph >= 0.28 ? 0.7 : 1; lastBeat = slot; }
+    }
+    const a = performance.now();
+    const env = step(sim, st, t, dt, kick);
+    sim.phys = sim.phys * 0.95 + (performance.now() - a) * 0.05;
+    for (const o of orbs) {
+      const b = performance.now();
+      draw(o, st, t, cm, env);
+      o.rend = (o.rend || 0) * 0.95 + (performance.now() - b) * 0.05;
+    }
+    fpsAcc = fpsAcc * 0.95 + dt * 0.05;
+    if (t - lastPerf > 0.5) {
+      lastPerf = t;
+      const o120 = orbs.find((o) => o.css === 120);
+      document.getElementById('perf').textContent =
+        `帧率 ${Math.round(1 / fpsAcc)} fps · 120px 单个形象每帧：物理 ${sim.phys.toFixed(2)} ms + 绘制 ${o120.rend.toFixed(2)} ms`;
+    }
+    requestAnimationFrame(frame);
+  }
+  let fpsAcc = 1 / 60, lastPerf = 0;
+
+  window.__jarvisBench = (n, css, iters = 120) => {
+    const cv = document.createElement('canvas'), W = Math.round(css * dpr);
+    cv.width = cv.height = W;
+    const o = { ctx: cv.getContext('2d'), W, css, sc: css / 300, parts: makeParticles(n) };
+    const out = {};
+    for (const k of ['await', 'think', 'speak']) {
+      const st = STATES[k]; assign(o, st, 0);
+      let phys = 0, rend = 0, t = 1;
+      for (let i = 0; i < iters; i++) {
+        t += 1 / 60;
+        const a = performance.now(); const env = step(o, st, t, 1 / 60, 0);
+        const b = performance.now(); draw(o, st, t, 1, env);
+        const c = performance.now(); phys += b - a; rend += c - b;
+      }
+      out[k] = { phys: +(phys / iters).toFixed(3), rend: +(rend / iters).toFixed(3) };
+    }
+    return out;
+  };
+
+  const btns = document.getElementById('st-btns');
+  ORDER.forEach((k) => {
+    const b = document.createElement('button'); b.textContent = STATES[k].name; b.dataset.k = k;
+    b.addEventListener('click', () => { auto = false; document.getElementById('auto').classList.remove('on'); setState(k, performance.now() / 1000); });
+    btns.appendChild(b);
+  });
+  document.getElementById('auto').addEventListener('click', (e) => {
+    auto = !auto; e.currentTarget.classList.toggle('on', auto); lastAuto = performance.now() / 1000;
+  });
+  document.querySelectorAll('#bgs button').forEach((btn) => btn.addEventListener('click', () => {
+    document.querySelectorAll('#bgs button').forEach((b) => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.stage').forEach((s) => { s.classList.remove('dark', 'light', 'busy'); s.classList.add(btn.dataset.bg); });
+  }));
+  const count = document.getElementById('count');
+  const applyCount = () => {
+    document.getElementById('count-v').textContent = count.value;
+    buildOrbs(+count.value);
+    const t = performance.now() / 1000;
+    assign(sim, STATES[cur], t);
+  };
+  count.addEventListener('input', applyCount);
+
+  lastT = lastAuto = performance.now() / 1000;
+  document.getElementById('count-v').textContent = count.value;
+  buildOrbs(+count.value);
+  setState('idle', lastT);
+  requestAnimationFrame(frame);
+})();
+</script>

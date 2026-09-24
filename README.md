@@ -1,37 +1,46 @@
 # dsh-harness-jarvis · 贾维斯
 
-DSH Desktop 的会话协调插件：通过 macOS 悬浮面板管理托管任务、审批、播报和本机记忆。
+桌面上的贾维斯：一颗常驻悬浮的粒子光球，替你盯住权限审批，随时唤起快速对话。
 
-A DSH Desktop plugin that coordinates managed sessions, approvals, spoken updates, and local memory through a macOS floating panel.
+A floating desktop assistant for DSH Desktop — a particle orb that keeps an eye on permission approvals and is always one shortcut away for a quick conversation.
 
-## 界面 / Screenshots
+当前 **0.7.1** 是"助手版"：聚焦两件事——**快速权限审批**与**悬浮式快速对话**。会话托管是已经具备的进阶能力（见[功能](#功能--features-071)末尾），完整的贾维斯愿景在[路线图](#路线图--roadmap)中继续推进。
 
-以下图片由仓库内的 Snapshotter 使用演示数据生成，不含真实会话。These screenshots use Snapshotter demo data, not private conversations.
+Version 0.7.1 is the *assistant* release: quick approvals and floating chat first. Session coordination is already there as an advanced capability; the full vision ships in later releases.
 
-<img src="docs/images/18-targets-task-state.png" width="560" alt="目标列表中的任务进度 / Task progress in the session picker">
-<img src="docs/images/19-approval-presets.png" width="560" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
-<img src="docs/images/20-auto-approvals.png" width="560" alt="最近五条自动审批及撤销预设 / Recent automatic approvals and preset revocation">
+## 形象 / The orb
 
-## 已实现功能 / Features
+贾维斯的本体是一颗 Metal 粒子光球：六边形核心，向外两次扩散成环，粒子在环间呼吸。空闲时安静悬浮，思考、说话、等待决策、出错各有一套动效；把它拖到屏幕边缘，光球会"融"进墙里，变成一条贴边的扁条，要用时一碰又涨回球形。
 
-功能范围以[待办清单](docs/superpowers/plans/2026-09-24-jarvis-backlog.md)中的“已完成”为准。
-Only completed backlog items are described here.
+The orb is a Metal particle field — a hex core that diffuses into two rings and breathes between them. Each state (idle, thinking, speaking, attention, error) has its own motion. Drag it to a screen edge and it melts flat into the wall; touch it and it blooms back.
 
-- **会话与任务 / Sessions and tasks（J0、J1、J2、U2）**：创建或恢复贾维斯会话，固定标题；记录任务交接、判断轮末完成情况，在面板显示进度。未完成时先询问用户，得到继续指令后才续做。Creates or resumes Jarvis, tracks delegated tasks and progress, and asks before continuing unfinished work.
-- **输出协调 / Output coordination（J4、J5）**：合并临近的完成播报，顺序提问；与 voice-mini 协作，让出已接管会话的轮末播报。Combines nearby completion announcements, queues questions, and avoids duplicate managed-session turn-end announcements with voice-mini.
-- **审批 / Approvals（J3、P0、P1）**：面板和 DSH 窗口可竞答，结果异步记入 HTML；可保存及删除工作区预设。分级自动审批默认关闭，启用后仍将高危或不确定请求交给用户，绝不自动拒绝；悬停可看最近五条自动批准及撤销对应预设。The panel and DSH race to answer approvals; results are recorded asynchronously. Workspace presets are revocable. Tiered approval is off by default, falls back to the user, and never automatically rejects.
-- **记忆 / Memory（M1、M2、M3、M6）**：`remember` / `recall`、有限字段的临时记录、按版本缓存的长期记忆人设注入。Scoped local storage, explicit remember/recall tools, limited automatic capture, and version-cached long-term memory in the Jarvis prompt.
-- **面板 / Panel（U1、H1）**：播报字幕、目标选择、输入与对话记录；默认 `⌃⌥J` 呼出输入框，快捷键可在面板设置中修改。Captions, session targeting, text input, conversation history, and a configurable global shortcut (Control–Option–J).
-- **设置与代答 / Settings and answers（J6、J7）**：DSH 设置页；低风险选择题代答默认关闭，超时、非法输出、低置信或选项不匹配均转用户。DSH settings and opt-in low-risk question answering with conservative fallback.
-- **运行维护 / Operations（W1、O1、T1）**：面板异常退出后有限次重启、日志轮转、过期播报缓存清理，以及真实 DSH 冒烟脚本。Bounded panel crash recovery, log rotation, speech-cache cleanup, and a host smoke-check script.
+- 交互式设计稿（克隆后本地打开即可看动效）/ Interactive design sketches, open locally after cloning:
+  - [docs/design/orb-states.html](docs/design/orb-states.html) — 各状态的粒子动效与实际尺寸对比
+  - [docs/design/orb-visual-direction.html](docs/design/orb-visual-direction.html) — 早期视觉方向探索
+- 以下截图由仓库内 Snapshotter 用演示数据生成，不含真实会话。All screenshots use Snapshotter demo data, never real conversations.
+
+<p>
+  <img src="docs/images/01-idle.png" width="420" alt="空闲悬浮的贾维斯光球 / The orb at rest">
+  <img src="docs/images/11-corner-topright-strip.png" width="360" alt="拖到屏幕角落融成扁条 / Melted flat into a screen corner">
+</p>
+<p>
+  <img src="docs/images/05-attention.png" width="420" alt="等待决策的提醒状态 / Attention state">
+  <img src="docs/images/19-approval-presets.png" width="420" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
+</p>
+
+## 功能 / Features (0.7.1)
+
+- **权限审批 / Approvals**：DSH 弹出权限请求时，悬浮窗出现审批卡片，直接**允许 / 拒绝 / 总是允许（此工作区）**；面板和 DSH 主窗口竞答，先到者生效。悬停可查看最近五条自动审批记录并撤销对应预设。分级自动审批默认**关闭**，开启后仍把高危或拿不准的请求交还给你，绝不自动拒绝。Approve or deny from the floating card — the panel races the DSH window, first answer wins. Tiered auto-approval is off by default and never auto-rejects.
+- **悬浮式对话 / Floating chat**：全局快捷键 `⌃⌥J`（默认，可在面板设置中修改）随时唤出快速输入条。可以和贾维斯直接聊，也可以在目标列表选中某个会话，把话交给贾维斯改写后转发；对话记录内嵌在面板里随点随看。One shortcut summons the input bar; talk to Jarvis directly or route a message through him to a chosen session, with inline history.
+- **播报与字幕 / Narration and captions**：任务完成与提问的播报带屏幕字幕；有 voice-mini 时优先协作播放（避免重复播报），没有则用内置 edge-tts。Completed tasks and questions are spoken with on-screen captions, via voice-mini when present or built-in edge-tts otherwise.
+- **形象与手感 / Presence**：粒子光球 + 五种状态动效 + 贴边融变 + 悬停唤醒，不用时安静待在角落。The orb itself: five state motions, edge melting, hover wake.
+- **进阶：会话协调 / Advanced: session coordination**：在面板目标列表里把工作会话"交给贾维斯"，即获得任务进度跟踪、轮末完成判断（拿不准会先问你）、结果转述与提问排队。不需要的用户可以完全忽略这一层——它不改变审批与对话的使用方式。Optional: mark worker sessions as managed to get task tracking, completion judging and relayed results. Ignorable if you only want the assistant.
 
 ## 安装 / Installation
 
-当前提供源码安装流程。预编译面板随包分发（R2）尚未完成；不要假定 npm 包包含面板二进制。
-Use a source checkout for the native panel. Prebuilt panel distribution (R2) is not implemented yet.
+当前提供源码安装。面板需要 macOS 14+ 与 Swift 6 工具链（Xcode 或 Command Line Tools）；宿主建议 Node.js 22.18+。Source install for now; the native panel needs macOS 14+ and Swift 6.
 
-1. 准备 DSH Desktop、Node.js 和 npm。面板需要 macOS 14+、Swift 6 工具链（Xcode 或 Command Line Tools）。开发测试建议 Node.js 22.18+，以支持直接运行 TypeScript 测试。Install DSH Desktop, Node.js and npm; building the panel requires macOS 14+ and Swift 6. Use Node.js 22.18+ for TypeScript tests.
-2. 在仓库目录构建 / Build from the repository root:
+1. 构建仓库 / Build from the repository root:
 
    ```sh
    npm ci
@@ -39,7 +48,7 @@ Use a source checkout for the native panel. Prebuilt panel distribution (R2) is 
    (cd macos && ./build.sh)
    ```
 
-3. 在你使用的 DSH profile 的 `package.json` 中，合并以下依赖和 bundle 条目；把路径换成此仓库的绝对路径，保留原有条目。Merge the dependency and bundle into your active DSH profile; replace the path and keep existing entries:
+2. 在你使用的 DSH profile 的 `package.json` 中合并以下条目（把路径换成此仓库的绝对路径，保留原有条目）：
 
    ```json
    {
@@ -52,24 +61,21 @@ Use a source checkout for the native panel. Prebuilt panel distribution (R2) is 
    }
    ```
 
-   在 profile 目录运行 `pnpm install` 解析 `link:`（不是在仓库中运行 npm 安装此链接）。插件的 `dsh.bundle.patch` 指向 [cordis.patch.yml](cordis.patch.yml)，插件自己创建贾维斯 agent；不要重复插入同 ID 的插件行。Run `pnpm install` in the profile directory to resolve the `link:` dependency. The bundle loads `cordis.patch.yml`; Jarvis creates its own agent, so do not insert a duplicate plugin row.
+3. 在 profile 目录执行 `pnpm install` 解析 `link:` 依赖（不要在仓库里安装此链接）。插件的 `dsh.bundle.patch` 指向 [cordis.patch.yml](cordis.patch.yml)；插件会自己创建贾维斯会话，不要在 profile 里重复插入同 ID 条目。
+4. 在 profile 覆盖配置或 DSH 的贾维斯设置页里，选择你已配置好的 `provider` / `model`（仓库默认 `bailian` / `qwen3.8-max-0902`，不保证与你的环境匹配）。重启 DSH 后执行 `npm run smoke` 验证。Pick a provider/model your DSH already has, restart DSH, then run the smoke check.
 
-4. 在 profile 覆盖配置或 DSH 的贾维斯设置页选择你已配置的 `provider` / `model`。仓库默认是 `bailian` / `qwen3.8-max-0902`，并不保证你的 DSH 已配置它们。重启 DSH 后执行 `npm run smoke`。Choose a provider/model available in your DSH profile, restart DSH, then run the smoke check.
-
-硬依赖服务为 `tools`、`userQuestions`、`jobs`；`agentLoop` 创建会话，`llm`、`systemPrompt`、`webServer`、`settings` 等按服务可用时接入。没有设置服务时仍使用插件配置；没有 webServer 时没有面板通信入口。
-Required injected services are `tools`, `userQuestions`, and `jobs`. Other services attach when available; `agentLoop` creates sessions and `webServer` enables panel communication. Missing settings support falls back to plugin configuration.
+硬依赖服务为 `tools`、`userQuestions`、`jobs`；`agentLoop`、`llm`、`systemPrompt`、`webServer`、`settings` 等按可用性接入，缺少时插件降级运行（无 webServer 则没有面板通信入口）。Required: `tools`, `userQuestions`, `jobs`; everything else attaches opportunistically and degrades gracefully.
 
 ## 首次使用 / First use
 
-1. 重启后打开“贾维斯”会话；在面板目标列表中，把需要协调的工作会话“交给贾维斯”。Open the Jarvis conversation, then mark worker sessions as managed in the panel's target list.
-2. 用 `⌃⌥J` 打开输入框，选择贾维斯或某个托管目标并输入任务。针对 worker 的输入会先交给贾维斯改写和转发。Choose Jarvis or a managed target and type a task; targeted input is routed through Jarvis.
-3. 面板会显示任务进度、审批与提问。可以在面板或 DSH 窗口回答，先到者生效。`总是允许（此工作区）` 仅对允许保存预设的操作显示。Answer in either surface; the first answer wins. The workspace preset button appears only for eligible operations.
-4. 悬停可控制声音并查看自动审批记录；展开输入区的对话记录可查看当前目标。说“记住……”使用长期记忆；可让贾维斯调用 `recall` 检索。Hover for voice controls and recent approvals, expand history for the selected target, and ask Jarvis to remember or recall information.
+1. 重启 DSH 后，屏幕上出现悬浮光球；按 `⌃⌥J` 唤出输入条即可开始对话。The orb appears after restart; press `⌃⌥J` to start chatting.
+2. 下一次 DSH 弹权限审批时，面板会出现审批卡片——点一下即可，也可以回到 DSH 主窗口处理，两边先答先得。The next approval shows up as a card; answer in either surface.
+3. 悬停光球可控制声音、查看自动审批记录；展开输入区可查看当前目标的对话记录。Hover for voice controls and approval history; expand for the conversation log.
+4. （进阶）在面板目标列表把某个工作会话"交给贾维斯"，即可获得任务进度与完成播报；不需要就跳过这一步。Optionally mark a session as managed to get task tracking.
 
 ## 配置 / Configuration
 
-下表由 `src/index.ts` 的 `Config` 与 `SettingsSchema` 生成。路径和会话身份通过 profile 配置；设置页中的 provider/model 在重启 DSH 后生效，其余开关按下一次请求生效。
-The table is generated from the actual schemas. Configure paths and session identity in the profile; provider/model changes require a DSH restart, while runtime switches apply to subsequent requests.
+下表由 `src/index.ts` 的 `Config` 与 `SettingsSchema` 生成。路径与身份经 profile 配置；设置页中的 provider/model 改动需重启 DSH，其余开关下次请求即生效。Generated from the actual schemas.
 
 <!-- CONFIG:START -->
 | 字段 / Field | 类型 / Type | 默认值 / Default | DSH 设置页 / Settings |
@@ -101,33 +107,35 @@ The table is generated from the actual schemas. Configure paths and session iden
 | `greetings` | string[] | `[]` | 是 / Yes |
 <!-- CONFIG:END -->
 
-- `judgeProvider` / `judgeModel` 留空时使用贾维斯的模型；`judgeTimeoutMs` 是毫秒，设置页限制 1000–120000；`maxContinueRounds` 为 0–10。Empty judge fields use Jarvis's model; the settings page bounds timeout and continuation rounds.
-- `managedNarration` 决定托管会话的结果由谁播报，可在悬浮窗目标列表里按会话单独切换（移出托管后恢复默认）。`self`（默认）：贾维斯转发时附一句“做完后用 speak 汇报”，会话自己口播，贾维斯轮末不播报、不接管 voice-mini，只在需要续做时询问；`relay`：贾维斯接管轮末，以转述者口吻总结播报，关闭判断时也会用一次模型调用总结。`self` lets the session announce itself via voice-mini's `speak` tool (fewer Jarvis tokens); `relay` has Jarvis retell the result, even with judging off.
-- `judgeEnabled=false` 时不调用判断模型：`self` 会话只更新任务台账，`relay` 会话只做转述总结；未装 voice-mini 时 `self` 会话轮末无播报，面板未读标记照常出现。Disabling judging skips the verdict; relayed sessions are still summarised.
-- `autoApprove`: `off` 全部询问用户；`safe` 仅只读白名单自动批准；`safe+grey` 允许灰区模型判断，中风险须命中预设或至少两次用户批准且从未拒绝。高危始终交给用户。High-risk operations always require the user, regardless of mode.
-- `askInterception` 默认关闭，只为托管会话的低风险选择题尝试代答。Opt-in question interception applies only to low-risk choices in managed sessions.
-- `locale` 控制启动问候语言，面板并非完整双语 UI。`titlePrefix`、`archiveIdleDays` 是保留字段，目前不实施 worker 自动改名或按天归档；`ttsBackend` 当前只有 `edge`。These reserved fields do not enable automatic renaming or archival; locale is not a full panel translation switch.
-- `memoryRoot` 下保存 `temp/`、`memory/`；`approvalsDir` 可独立配置。`lockFile` 是记忆写入诊断日志，不是跨进程锁。`runtimeFile` 含面板连接凭据，不要分享。Panel appearance and shortcut settings are stored separately in `~/.dsh/jarvis/panel.json`.
+- `judgeProvider` / `judgeModel` 留空时沿用贾维斯的模型；`autoApprove` 的保守规则见[功能](#功能--features-071)。Empty judge fields reuse Jarvis's model.
+- `locale` 控制启动问候语言，不是完整的面板双语开关；面板外观与快捷键设置保存在 `~/.dsh/jarvis/panel.json`。`locale` is not a full panel translation switch.
+- `memoryRoot` 下保存 `temp/`、`memory/` 与审批记录；`runtimeFile` 含面板连接凭据，不要分享。`runtimeFile` holds panel credentials — keep it private.
 
 ## 与 voice-mini 配合 / Working with voice-mini
 
-voice-mini 是可选插件。可用时贾维斯优先调用它的播报与播放控制；不可用时使用内置 edge-tts。更新到支持 `claimsTurnEnd` 和字幕 `text` 信号的 voice-mini，可避免托管轮末重复播报并显示字幕；旧版缺少字幕字段时只是不显示字幕。静音会抑制播报。
-voice-mini is optional. Jarvis prefers its speech and playback controls, falling back to built-in edge-tts. Use a version supporting `claimsTurnEnd` and speech `text` signals for coordinated turn-end speech and captions; missing caption fields are tolerated.
+voice-mini 可选。可用时贾维斯优先用它的播报与播放控制（含 `claimsTurnEnd` 与字幕 `text` 信号，避免托管轮末重复播报）；不可用时退回内置 edge-tts。静音会抑制播报。voice-mini is optional; Jarvis prefers it when present and falls back to built-in edge-tts.
 
 ## 隐私与权限 / Privacy and permissions
 
-任务台账、托管集合、审批 HTML、记忆、日志和语音缓存默认保存在本机 `~/.dsh/jarvis`。本插件没有另设云端记忆库。**本机存储不等于离线处理**：配置的模型服务会接收相应任务、判断上下文和记忆提示；内置 edge-tts 会把待播报文本发送给 Microsoft 语音服务。voice-mini 的处理方式取决于其后端配置。
-Task records, approvals, memory, logs and audio caches are stored locally by default. Local storage does not imply offline processing: configured model providers receive relevant context, and built-in edge-tts sends speech text to Microsoft's service. voice-mini follows its selected backend.
+任务台账、托管集合、审批记录、记忆、日志与语音缓存默认保存在本机 `~/.dsh/jarvis`，没有云端记忆库。**本机存储不等于离线处理**：所配置的模型服务会收到相应的任务与判断上下文，内置 edge-tts 会把播报文本发给 Microsoft 语音服务。Local storage by default; but your configured model provider and the built-in edge-tts service do receive relevant text.
 
-插件不申请 `danger-full-access`。快捷键使用 Carbon RegisterEventHotKey，不要求辅助功能全局按键监听权限；当前没有麦克风录音或语音输入。自动代答与自动审批均默认关闭。审批记录和日志可能包含敏感操作上下文，请自行管理本机文件及分享范围。
-The plugin does not request danger-full-access. The Carbon hotkey does not require accessibility keyboard monitoring. There is no microphone capture or speech input. Automatic answers and approvals are disabled by default; local records can contain sensitive task context.
+插件不申请 `danger-full-access`；快捷键走 Carbon RegisterEventHotKey，不需要辅助功能按键监听；当前没有麦克风录音。自动代答与自动审批默认关闭；审批记录与日志可能包含敏感操作上下文，请自行管理分享范围。No danger-full-access, no accessibility keyboard monitor, no microphone. Auto-answering and auto-approval are off by default.
+
+## 路线图 / Roadmap
+
+0.7.x 之后的正式版将逐步补齐"指挥官"愿景，优先级从高到低：
+
+- 语音输入（对贾维斯说话，含唤醒词）/ Voice input and wake words
+- 预编译面板随 npm 包分发，免本地 Swift 构建 / Prebuilt panel in the npm package
+- 托管深化：更聪明的续做判断与任务编排 / Smarter continuation judging and task orchestration
+- 自动记忆整理与长期记忆固化 / Memory consolidation
+- 跨平台面板（非 macOS 桌面）/ Panels beyond macOS
 
 ## 已知限制 / Known limitations
 
-- 原生面板仅面向 macOS；语音输入 S0/S1、通用预编译分发 R2 尚未完成。The native panel targets macOS; dictation and universal prebuilt distribution are pending.
-- SEC1 安全审查与 Q1 真机验收尚未完成，不声称已经完成发布安全验收。SEC1 security hardening and Q1 manual acceptance remain pending.
-- 自动分类是保守规则与可选模型判断，不是命令执行沙箱；无法确定的操作仍交给用户。撤销预设只影响后续审批，不撤销已执行的操作。Classification is not an execution sandbox, and revoking a preset does not undo completed operations.
-- 自动记忆整理/固化 M4/M5 暂缓；唤醒词和跨平台面板不在当前范围。Memory consolidation, wake words and cross-platform panels are not shipped capabilities.
+- 原生面板仅面向 macOS 14+；语音输入与预编译分发尚未完成。macOS-only panel; dictation and prebuilt distribution pending.
+- 自动审批是保守规则加可选模型判断，不是命令执行沙箱；撤销预设不影响已执行的操作。Classification is not an execution sandbox; revoking a preset does not undo past operations.
+- SEC1 安全审查与 Q1 真机验收未完成，暂不声称已通过发布安全验收。Security review and manual acceptance are pending.
 
 ## 开发 / Development
 
@@ -136,22 +144,16 @@ npm ci
 npm run build
 npm test
 (cd macos && swift test && ./build.sh)
-npm run docs:config          # rebuild and regenerate the configuration table
+npm run docs:config          # 重新生成上方配置表
 npm run docs:config -- --check
 npm pack --dry-run
 ```
 
-构建后重启 DSH，再执行 `npm run smoke`；可选 `npm run smoke -- --write` 会临时切换一个未托管会话并尝试恢复原状态，失败时按脚本提示处理。不要在未重启 DSH 时把冒烟结果当成新代码验证。
-Restart DSH after building, then run `npm run smoke`. Optional `--write` temporarily changes one unmanaged session and attempts to restore it; follow any recovery message if restoration fails.
-
-面板改动后重建并重启；截图从仓库根目录生成。Snapshot mode uses demo data and exits after rendering:
+构建后重启 DSH 再执行 `npm run smoke`；`--write` 会临时切换一个未托管会话并尝试恢复原状。面板改动后重建并重启；截图用演示数据从仓库根目录生成：Restart DSH after building. Screenshots regenerate from demo data:
 
 ```sh
 JARVIS_SNAPSHOT=/tmp/jarvis-snapshots ./macos/jarvis-panel
 ```
-
-配置表修改后应重新生成并运行测试。包内容检查应包含 README、LICENSE、`lib/`、`cordis.patch.yml`，以及文档截图和内置 TTS 脚本；面板二进制仍由 R2 处理。
-Regenerate the configuration table when schemas change. Check package contents before release; native binary distribution remains a separate backlog item.
 
 ## 许可证 / License
 

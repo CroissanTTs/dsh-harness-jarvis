@@ -35,6 +35,7 @@
 | J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 已完成（`j3-approval-records-20260924`） |
 | U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 已完成（`u2-task-state-20260924`） |
 | J8 | 清理：过期注释、残留字段、SPEC 同步（放在本阶段最后） | — | 小 | 已完成（`j8-cleanup-20260924`） |
+| J5a | 关闭完成判断时的重复播报（J5 实现记录留下的边界） | J5 | 小 | 待办 |
 
 ### 阶段 3：稳定性
 
@@ -308,6 +309,17 @@
 - **实现记录**（2026-09-24）：Jarvis 新增 `src/turn-end.ts` 纯判定、`src/index.ts` 的 `claimsTurnEnd` 服务及 `tests/turn-end.test.ts` / `tests/tasks-wiring.test.ts` 测试；仅托管、有未结任务且启用判断时接管。voice-mini 的 `src/index.ts` 在 `turn/end` 开头检查严格 `true`，缺失或抛错均回退原播报，状态提示音及工具播报不变；扩展 `test-jarvis-speech.mjs` 并同步受版本管理的 `lib/index.js`（包含基线源码已有的 replay 播报信号两行）。两侧测试按等价类 / 边界值 / 异常路径分组，Jarvis 插件 **171/171**、面板 **208/208**、voice-mini **41/41** 通过，两插件构建通过，独立代码审查无待修问题。
   - 提交：Jarvis 标签 `j5-voice-mini-yield-20260924` 指向含本记录的最终提交（`git rev-parse j5-voice-mini-yield-20260924` 可取提交号）；voice-mini `27ec197`，提交信息已注明依赖 Jarvis 的 `claimsTurnEnd`。两仓库均从各自最新 `main` 建独立 worktree 和同名分支 `codex/j5-voice-mini-yield`，前置 J2 已在 Jarvis `main`。
   - 按条目原条件实现，没有扩大 J2 行为：`judgeEnabled=false` 时 voice-mini 照旧，J2 仍有模板播报，此配置下的重复播报边界留维护人确认。未做真实 DSH 人工验收；重启 DSH 后检查托管任务只有 Jarvis 轮末播报、普通会话照旧、状态提示音和工具播报照旧；无需重启面板。
+
+### J5a 关闭完成判断时的重复播报
+
+- **问题**：`judgeEnabled=false` 时，`claimsTurnEnd`（`src/turn-end.ts`）返回 false，voice-mini 照常总结播报；但 J2 在判断关闭时仍对托管任务播"{会话名}做完了"的模板，失败原因也照播。同一轮会被说两遍。
+- **方案**：判断关闭 = 贾维斯不接管轮末播报，全部交给 voice-mini（它的总结比模板信息量大）。
+  1. `judgeEnabled=false` 时，贾维斯对 `completed` 和各类失败都**不播报**，只更新台账：`completed` 标 `done`，`aborted` 标 `dropped`，失败保持 open（与 J2 原逻辑一致）。
+  2. `claimsTurnEnd` 保持现状（判断关闭时返回 false），两边规则正好互补：判断开 → 贾维斯说、voice-mini 让出；判断关 → voice-mini 说、贾维斯沉默。
+  3. 未安装 voice-mini 且判断关闭时，托管任务的轮末不会有任何播报。这是可接受的：用户主动关了判断，面板未读标记照常出现。在 README 的配置说明里补一句。
+- **位置**：优先在 `src/judge.ts` 的 `planTurnEnd` 里加一个 `judgeEnabled` 输入，由它产出"只更新台账、不播报"的动作，避免在 `index.ts` 里分支。
+- **测试**：`planTurnEnd` 在判断关闭时对每种 `reasonKind` 的动作（等价类）；判断开关在运行中通过设置页切换后立即生效（边界，J6 的 watch）；台账写失败不影响（异常）。
+- **实现记录**：（空）
 
 ## 4. 条目详情：记忆系统（§10）
 
@@ -722,6 +734,8 @@
 | D7 | 面板怎么随插件分发？ | 随包发布预编译的通用二进制（arm64 + x86_64，ad-hoc 签名）；不要求用户本地编译 | ⚠ 待用户拍板（R2 开工前确认） |
 
 ## 13. 变更日志
+
+- 2026-09-24 16:00：维护核查。阶段 2–6、8 及 R1 共 20 条已完成，22 个完成标签全部在 `main` 上；`main` 插件 857/857、面板 297/297、构建通过，`npm run smoke` 7 项通过；voice-mini 的 J5、U1 改动已合入其 `main`。新增 J5a（J5 记录中留给维护人的边界：判断关闭时重复播报）。W1 实现记录中"尚未合入"的措辞已过时，实际已合入（`d073436`）。S0 正在 `~/.codex/worktrees/s0-stt-probe` 进行，尚未提交。当前运行的 DSH 插件是 10:31 启动的，需重启才能加载今天的功能。
 
 - 2026-09-24：新增派发 prompt 文件（25 条）。新增规则：主目录必须停在 `main`（DSH 通过软链接直接加载主目录），实现一律在 `../jarvis-wt/<slug>` worktree 中进行，合并后在主目录重新构建。使用方法补充合并与汇报步骤。
 

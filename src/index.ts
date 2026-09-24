@@ -46,6 +46,8 @@ import { LiveState } from './live-state.ts';
 import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
+import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
+import { writeApproval } from './approval-store.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
@@ -139,6 +141,7 @@ export const Config = z.object({
   audioDir: z.string().default('~/.dsh/jarvis'),
   managedFile: z.string().default('~/.dsh/jarvis/managed.json'),
   tasksFile: z.string().default('~/.dsh/jarvis/tasks.json'),
+  approvalsDir: z.string().default('~/.dsh/jarvis/memory/approvals'),
   lockFile: z.string().default('~/.dsh/jarvis/lock.json'),
   runtimeFile: z.string().default('~/.dsh/jarvis/runtime.json'),
   titlePrefix: z.string().default('贾维斯-'),
@@ -165,6 +168,7 @@ interface JarvisConfig {
   audioDir: string;
   managedFile: string;
   tasksFile: string;
+  approvalsDir: string;
   lockFile: string;
   runtimeFile: string;
   titlePrefix: string;
@@ -805,8 +809,46 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
 
   // ── approvals / questions relayed to the悬浮窗 (§11) ──────────────────
   // Prepended so the panel races the DSH window; whichever answers first wins.
-  ctx.on('approval/request' as any, (req: any, next: () => Promise<any>) =>
-    live.holdApproval(req, next, approvalCommand(req)), { prepend: true } as any);
+  ctx.on('approval/request' as any, (req: any, next: () => Promise<any>) => {
+    let snapshot: Omit<ApprovalRecord, 'ts' | 'decision'> | undefined;
+    let metadataError: unknown;
+    let command: string | undefined;
+    try {
+      // Freeze request metadata before DSH resumes and starts mutating the session.
+      const sid = String(req.agent.id);
+      const messages: any[] = req.agent?.session?.deriveMessages?.() ?? [];
+      const operation = approvalOperation(messages, req.callId);
+      command = operation.command;
+      const lastUser = [...messages].reverse().find(message => message?.role === 'user');
+      const context = ledger.peekCurrent(sid)?.request ?? (lastUser?.content ?? [])
+        .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block: any) => block.text).join('\n');
+      const cwd = (ctx as any).get?.('sessions')?.get?.(sid)?.header?.cwd;
+      snapshot = {
+        fingerprint: fingerprint(req.toolName, command),
+        session: { id: sid, cwd: typeof cwd === 'string' ? cwd : '', managed: managed.has(sid) },
+        operation: { tool: req.toolName, ...operation },
+        context: Array.from(context).slice(0, 300).join(''),
+        tier: { value: '', notes: 'Phase1:未分级' },
+      };
+    } catch (error) { metadataError = error; }
+    return live.holdApproval(req, next, command?.slice(0, 300)).then(outcome => {
+      if (outcome !== 'allowed-once' && outcome !== 'rejected') return outcome;
+      const ts = new Date().toISOString();
+      // A microtask would run before the DSH waterfall returns to its caller.
+      setImmediate(() => {
+        const onError = (error: unknown) => debug(entry, 'approval record failed: ' +
+          (error instanceof Error ? error.message : String(error)));
+        try {
+          if (!snapshot) { onError(metadataError); return; }
+          void writeApproval(resolveDir(entry.approvalsDir), {
+            ...snapshot, ts, decision: { allow: outcome === 'allowed-once', source: 'user', reason: '' },
+          }, onError);
+        } catch (error) { try { onError(error); } catch {} }
+      });
+      return outcome;
+    });
+  }, { prepend: true } as any);
   ctx.on('user-questions/request' as any, (req: any, next: () => Promise<any>) =>
     live.holdAsk(req, next), { prepend: true } as any);
 
@@ -1031,26 +1073,6 @@ function agentRunning(ctx: Context, id: string): boolean | undefined {
     const status = a?.status ?? a?.agent?.status;
     return typeof status === 'string' ? status === 'running' : undefined;
   } catch { return undefined; }
-}
-
-/** The command an approval is about, pulled from the asking agent's pending tool call. */
-function approvalCommand(req: { agent?: any; callId?: unknown }): string | undefined {
-  if (req.callId === undefined) return undefined;
-  try {
-    const msgs: any[] = req.agent?.session?.deriveMessages?.() ?? [];
-    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 4); i--) {
-      for (const b of msgs[i]?.content ?? []) {
-        if ((b?.type !== 'toolCall' && b?.type !== 'tool_call') || b?.id !== req.callId) continue;
-        let args: any = b.arguments ?? b.input;
-        if (typeof args === 'string') { try { args = JSON.parse(args); } catch { return args.slice(0, 300); } }
-        const text = typeof args?.command === 'string' ? args.command
-          : typeof args?.path === 'string' ? args.path
-            : JSON.stringify(args ?? '');
-        return text.slice(0, 300);
-      }
-    }
-  } catch {}
-  return undefined;
 }
 
 /** Rename pins the title, so each successful startup only needs one attempt. */

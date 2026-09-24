@@ -26,6 +26,15 @@ function seed(count: number, status: Task['status'] = 'open'): Task[] {
 }
 
 describe('等价类', () => {
+  it('只读查询返回未结任务快照且未知会话返回undefined', () => {
+    const tasks = ledger();
+    const task = tasks.open('a', '任务');
+    assert.equal(tasks.peekCurrent('b'), undefined);
+    const result = tasks.peekCurrent('a')!;
+    assert.deepEqual(result, task);
+    result.request = 'mutated';
+    assert.equal(tasks.peekCurrent('a')?.request, '任务');
+  });
   it('原话只在内存缓存，投递时与消息一起落盘并消费', () => {
     const tasks = ledger();
     tasks.expect('a', '  原话\n');
@@ -130,6 +139,17 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('只读查询在24小时边界有效，过期不修改状态，后续prune仍落盘', () => {
+    const tasks = ledger();
+    const task = tasks.open('a', '任务');
+    time += DAY;
+    assert.equal(tasks.peekCurrent('a')?.id, task.id);
+    time++;
+    assert.equal(tasks.peekCurrent('a'), undefined);
+    assert.equal(saved()[0].status, 'open');
+    tasks.prune();
+    assert.equal(saved()[0].status, 'dropped');
+  });
   it('过期原话不会把续轮误当成新任务，过期任务不能续用', () => {
     const tasks = ledger();
     const first = tasks.open('a', '需求');
@@ -237,6 +257,12 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  it('只读查询拒绝空白会话', () => {
+    const tasks = ledger();
+    for (const session of ['', ' ', undefined, 42]) {
+      assert.throws(() => tasks.peekCurrent(session as any), /session must not be blank/);
+    }
+  });
   for (const raw of ['{bad', 'null', '{}', '42', '[null, 7, {}]']) {
     it(`损坏或无效文件 ${raw} 按空账本处理`, () => {
       writeFileSync(file, raw);

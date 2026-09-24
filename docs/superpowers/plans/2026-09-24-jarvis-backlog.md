@@ -32,7 +32,7 @@
 | J5 | voice-mini 让出托管会话的轮末播报（J2 上线后会重复播报，优先做） | J2 | 小 | 已完成（`j5-voice-mini-yield-20260924`） |
 | J4 | 输出协调（播报合并、同一时间只问一个问题） | J2 | 中 | 已完成（`j4-output-20260924`） |
 | J0 | 修复贾维斯会话标题设置（改用 `rename`）（可并行） | — | 小 | 已完成（`j0-title-20260924`） |
-| J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 待办 |
+| J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 已完成（`j3-approval-records-20260924`） |
 | U2 | 目标列表显示任务进度（判断中 / 未满足） | J1、J2 | 小 | 待办 |
 | J8 | 清理：过期注释、残留字段、SPEC 同步（放在本阶段最后） | — | 小 | 待办 |
 
@@ -277,7 +277,10 @@
   - 等价类：普通命令、带绝对路径的命令、非 bash 工具（只有 path）。
   - 边界：空命令、超长命令（>8 词）、Unicode 命令、同一秒两条（文件名不能冲突，追加 `-2`）。
   - 异常：命令含 `<>&"'` 时 HTML 正确转义；undefined command；写目录无权限不抛出。
-- **实现记录**：（空）
+- **实现记录**（Codex J3 / 2026-09-24）：`src/approvals.ts` 提供指纹、文件名、全字段 HTML 转义及操作参数提取；`src/approval-store.ts` 将完整内容写入同目录临时文件，再用 hard link 原子发布（避免 rename 覆盖已有文件），同秒并发自动追加 `-2`、`-3`。`src/index.ts` 对托管及非托管会话只记录 allowed-once/rejected，保留原始参数和完整命令；面板仍截断显示 300 字。增加 `approvalsDir` 配置，默认规格路径。
+  - 边界决定：审批请求进入时用新增的 `TaskLedger.peekCurrent` 只读查询冻结台账原话（无任务则最后一条 user 消息的全部文本块）、managed、操作和 cwd，上下文按 Unicode 码点截断 300 字；结算后用 `setImmediate` 延后所有落盘和错误日志，确保 DSH Promise 链先返回 outcome。只读查询沿用 24 小时 TTL 但不修改状态、不清理、不写盘，避免原 `current` 隐式 prune/save 阻塞审批；后续周期 prune 仍会正常持久化过期状态。元数据失败跳过该条并延后记日志，落盘及日志失败都不改变 outcome。现有 `sessionWorkspace` 实际返回目录末段，因此记录直接从 sessions 的 header.cwd 取完整路径；未改面板的目录显示逻辑。
+  - 文件名保留合法指纹中的冒号，时间统一 UTC 秒，移除路径危险字符与前导点并限制指纹文件名前缀到 160 字节；空命令使用空规范化部分。HTML 保留 §10.1 全部属性，额外让 session/operation/decision 含转义后的可读文本，直接打开可见会话、命令和批准/拒绝。M1 尚未合入，按用户要求直接原子写文件；**M1 后续迁移提醒：改走 MemoryStore 的 general 写锁**（遵守不改其他条目，提醒仅留此处）。
+  - 验证：`tests/approvals.test.ts`、`tests/approvals-wiring.test.ts`、`tests/tasks.test.ts` 按等价类 / 边界值 / 异常路径新增 29 项；真实注册监听器覆盖 DSH 与面板决定、返回前无文件系统调用、台账/消息回退、上下文冻结、异常隔离。`node --test tests/*.test.ts` 235/235（包含已合入的 J0，rebase 后重新全量验证）、`cd macos && swift test` 208/208、`npm run build`、`git diff --check bf88e80..HEAD` 通过。需重启 DSH 后人工触发一次审批，核验默认目录 HTML；无需单独重启面板。表格标签由维护人在审查并合入后创建，保持实现与记录在同一个提交。
 
 ### J4 输出协调（规格里的"输出锁"）
 

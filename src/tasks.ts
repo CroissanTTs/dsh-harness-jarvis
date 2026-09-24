@@ -85,6 +85,19 @@ export class TaskLedger {
     return undefined;
   }
 
+  /** Read-only request snapshot: leave expiry persistence to current/prune. */
+  peekCurrent(session: string): Task | undefined {
+    requireText(session, 'session');
+    const now = this.now();
+    for (let i = this.tasks.length - 1; i >= 0; i--) {
+      const task = this.tasks[i];
+      if (task.session === session && unfinished(task) && now - task.createdAt <= TASK_TTL) {
+        return snapshot(task);
+      }
+    }
+    return undefined;
+  }
+
   setStatus(id: string, status: Task['status'], verdict?: Task['lastVerdict']): void {
     const task = this.tasks.find(task => task.id === id);
     if (!task) return;

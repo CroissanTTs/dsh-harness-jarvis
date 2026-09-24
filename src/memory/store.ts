@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { renderMemory, type LongEntry } from './format.ts';
 import { atomicWrite, writeJournal, type WriteJournal } from './journal.ts';
-import { storeLock } from './lock.ts';
+import { storeLock, storeState } from './lock.ts';
 export { renderMemory, parseMemory, type LongEntry } from './format.ts';
 
 export const TEMP_MAX_BYTES = 2 * 1024 * 1024;
@@ -78,6 +78,9 @@ export class MemoryStore {
   }
 
   ready(): Promise<void> { return this.journal.ready; }
+
+  /** Process-local revision for successful long-entry writes/removals, shared across instances. */
+  version(scope: MemoryScope = 'general'): number { return storeState(this.directory(scope)).longVersion; }
 
   private directory(scope: MemoryScope): string {
     if (scope === 'approvals') return this.approvalsDir;
@@ -189,16 +192,31 @@ export class MemoryStore {
     return this.withWriteLock(scope, async directory => {
       await this.directoryExists(directory, true);
       await atomicWrite(join(directory, file), html);
+      storeState(directory).longVersion++;
       return file;
     });
   }
 
+  private async longFiles(directory: string): Promise<string[]> {
+    if (!await this.directoryExists(directory)) return [];
+    return (await readdir(directory, { withFileTypes: true }))
+      .filter(file => file.isFile() && /^[A-Za-z0-9._-][A-Za-z0-9:._-]*\.html$/.test(file.name))
+      .map(file => file.name).sort();
+  }
+
   async listLong(scope: MemoryScope): Promise<string[]> {
+    return this.withReadLock(scope, directory => this.longFiles(directory));
+  }
+
+  /** Read the revision and all long HTML under one lock, never pairing old data with a new revision. */
+  async snapshotLong(scope: MemoryScope): Promise<{ version: number; files: { name: string; html: string }[] }> {
     return this.withReadLock(scope, async directory => {
-      if (!await this.directoryExists(directory)) return [];
-      return (await readdir(directory, { withFileTypes: true }))
-        .filter(file => file.isFile() && /^[A-Za-z0-9._-][A-Za-z0-9:._-]*\.html$/.test(file.name))
-        .map(file => file.name).sort();
+      const files: { name: string; html: string }[] = [];
+      for (const name of await this.longFiles(directory)) {
+        const path = join(directory, name);
+        if (await this.regularFile(path)) files.push({ name, html: await readFile(path, 'utf8') });
+      }
+      return { version: storeState(directory).longVersion, files };
     });
   }
 
@@ -216,6 +234,7 @@ export class MemoryStore {
     return this.withWriteLock(scope, async directory => {
       if (!await this.directoryExists(directory) || !await this.regularFile(join(directory, file))) return false;
       await unlink(join(directory, file));
+      storeState(directory).longVersion++;
       return true;
     });
   }

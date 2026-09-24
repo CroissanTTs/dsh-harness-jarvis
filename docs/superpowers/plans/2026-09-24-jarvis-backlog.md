@@ -52,7 +52,7 @@
 | M1 | 记忆存储底座：目录布局 + 按 store 读写锁 | — | 中 | 已完成（`m1-memory-store-20260924`） |
 | M2 | `remember` / `recall` 工具 | M1 | 中 | 已完成（`m2-remember-recall-20260924`） |
 | M3 | 自动抓取 temp（pass A）（与 M2 可并行） | M1 | 中 | 已完成（`m3-temp-capture-20260924`） |
-| M6 | 长期记忆注入贾维斯人设（L1 section） | M2 | 小 | 待办 |
+| M6 | 长期记忆注入贾维斯人设（L1 section） | M2 | 小 | 已完成（`m6-memory-section-20260924`） |
 
 ### 阶段 5：面板体验
 
@@ -401,7 +401,9 @@
 - 在 `decorateJarvisAgent` 里再注册一个 section：`name: 'jarvis:memory'`，`order: 60`，`text: () => 最近 20 条 general 长期的 key 列表`（按创建时间倒序，总长不超过 1500 字）。
 - **缓存稳定**：内容只在 general 长期变化时才变（`store` 维护一个 version，section 文本按 version 缓存），不做按 query 的 top-K（§10.3：会破坏缓存前缀）。
 - **测试**：截断边界、空库时返回空串（section 不显示）、version 不变时返回同一字符串实例。
-- **实现记录**：（空）
+- **实现记录**（Codex M6 / 2026-09-24）：新增 `src/memory/section.ts`，仅注入 general 长期最新 20 条 key，创建时间倒序、同时间按 id 稳定排序，含标题和列表符总长不超过 1500 Unicode 码点；空库返回空串。`MemoryStore` 对成功的长期写入/实际删除递增共享 version，`snapshotLong` 在同一读锁内返回版本与内容；section 按版本缓存并合并并发刷新，版本不变不读盘、不重排，读取失败保留旧缓存并下次重试。`src/index.ts` 在贾维斯作用域注册 order 60 的 `jarvis:memory`；同步 section provider 配合宿主异步 assembly waterfall 刷新，确保首次组装和 remember 后下一次组装即生效。记忆中 `{{…}}` 经 literal variable 保留原文，避免宿主模板展开或报错；同步更新 `SPEC.md` 与 memory README。
+  - 边界决定：空白 key 和损坏 HTML 跳过，key 内换行折为空格；过期记录仅在初次加载或版本变化重建时过滤，单纯时间流逝不改变同版本文本，严格保持缓存前缀。version 为进程内、按规范化 store 路径共享；调用方使用 `writeLong/removeLong` 才会通知失效，手工改磁盘文件需重载。JavaScript 字符串是原始值，使用严格相等和 snapshot 调用次数验证原样返回与不重读。真实 DSH 的 section provider 不支持 Promise，因此采用 scoped assembly hook 等待刷新，是对条目示意接线的适配。
+  - 验证：新增纯逻辑及真实 `apply()` 接线测试 23 项，按等价类 / 边界值 / 异常路径分组，覆盖 20 条、1499/1500/1501 码点、空库、版本隔离/跨实例、锁内快照、失败重试与模板字面量。插件 428/428、面板 222/222、`npm run build`、`macos/build.sh`、`git diff --check` 均通过；独立审查无阻断问题。表格标签 `m6-memory-section-20260924` 定位单个实现提交。合入主目录重新构建后需用户重启 DSH 并运行 `npm run smoke`，手动验收 general remember 后下一轮可使用该记忆、per-session 内容不注入；面板代码未改，无需单独重启。
 
 ## 5. 条目详情：设置、提问拦截、清理、验收
 

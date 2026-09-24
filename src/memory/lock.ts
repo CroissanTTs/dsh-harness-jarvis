@@ -33,11 +33,13 @@ export class ReadWriteLock {
   }
 }
 
-const locks = new Map<string, ReadWriteLock>();
-export function storeLock(directory: string): ReadWriteLock {
+interface StoreState { lock: ReadWriteLock; longVersion: number }
+const stores = new Map<string, StoreState>();
+export function storeState(directory: string): StoreState {
   // Conservative case folding also serializes aliases on default macOS/Windows volumes.
   const key = process.platform === 'darwin' || process.platform === 'win32' ? directory.toLowerCase() : directory;
-  let lock = locks.get(key);
-  if (!lock) { lock = new ReadWriteLock(); locks.set(key, lock); }
-  return lock;
+  let state = stores.get(key);
+  if (!state) { state = { lock: new ReadWriteLock(), longVersion: 0 }; stores.set(key, state); }
+  return state;
 }
+export function storeLock(directory: string): ReadWriteLock { return storeState(directory).lock; }

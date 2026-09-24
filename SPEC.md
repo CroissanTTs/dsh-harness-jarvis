@@ -1,7 +1,7 @@
 # dsh-harness-jarvis — 设计 Spec
 
-> 状态：M3 自动 temp 抓取实现同步 · 2026-09-24
-> 已落地：J0/J1/J2/J3/J4/J5/U2/M1/M2/M3；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取和审批记录已落地，人设记忆注入仍是后续设计；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
+> 状态：M6 长期记忆人设注入实现同步 · 2026-09-24
+> 已落地：J0/J1/J2/J3/J4/J5/U2/M1/M2/M3/M6；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取、人设记忆注入和审批记录已落地；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
 > 单一真相源。MVP 砍 STT(悬浮窗文本输入窗口替代);权限面彻底干净(无 danger-full-access)。多对话核心:瘦编排+干净 worker+虚拟交错显示(§3.2);悬浮窗 dsh-notch 基(§12)。待研究:次要(见 §18)。
 
 ---
@@ -174,7 +174,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 ## 10. 记忆(两级:temp JSONL + 长期 HTML)
 
-> 实现边界：存储底座（M1）、显式 remember/recall（M2）、自动 temp 抓取（M3）和 §10.1 审批记录（J3）已落地。人设记忆注入对应 backlog M6；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
+> 实现边界：存储底座（M1）、显式 remember/recall（M2）、自动 temp 抓取（M3）、人设记忆注入（M6）和 §10.1 审批记录（J3）已落地；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
 
 - **临时记忆 temp**:`~/.dsh/jarvis/temp/<sessionId>/*.jsonl`,一行一事件(append-only,机器友好)。
 - **长期记忆**:`~/.dsh/jarvis/memory/{general,<sessionId>,approvals}/*.html`(语义标签,可 grep+read,人/agent 可读)。
@@ -183,7 +183,7 @@ DSH / Cordis 加载插件 → apply()（全局）
 - **原则1 关键点 + 源指针**:记忆存关键点 + 源 session 指针;细节不进记忆(指回 worker transcript / 提示用户看 session)→ 多 worker 也不爆。
 - **原则2 最终结果优先压缩**:固化/摘要 model pass 时 weight final result,压过程/解释(agent 可靠性/鲁棒性等)。
 - **原则3 处置分类器(待细化,见 §18 P1)**:被监听 worker 的 end hook → 分类器逐条判 **4 去向**:丢弃 / 直接入 temp / 直接入长期 / 触发 Remember。**必须动态、可优化**(模型 pass + 规则护栏,可调)。
-- **注入(瘦编排下)**:**L1** 稳定 `section`(general 长期关键点,scoped 到 Jarvis,缓存前缀命中)+ **L4** `recall` 工具(Jarvis / worker reviewer 按需拉,关键点+源指针)。未来若给完成判断接入记忆，可按需检索 per-session 长期；当前 J2 使用 §8.1 的独立调用。**L2/L3**(per-session temp 注入某 context)在瘦编排 MVP 不用(Jarvis 瘦、不堆 worker temp);后续若 worker reviewer 要注入再上。
+- **注入(瘦编排下)**:**L1** 已实现 `jarvis:memory` section（order 60，仅贾维斯作用域；general 最新 20 条 key，按创建时间倒序，总长最多 1500 码点；按 store version 缓存，无变化不重读或重排，空库不显示）+ **L4** `recall` 工具(Jarvis / worker reviewer 按需拉,关键点+源指针)。未来若给完成判断接入记忆，可按需检索 per-session 长期；当前 J2 使用 §8.1 的独立调用。**L2/L3**(per-session temp 注入某 context)在瘦编排 MVP 不用(Jarvis 瘦、不堆 worker temp);后续若 worker reviewer 要注入再上。
 - **多会话源标注**:每条 temp/长期标 source session id;`recall` 可按 session 过滤;可跨会话综合。
 - 选 HTML(长期)是为标签结构化、可按 intent/session/status 检索;JSONL(temp)为机器友好(易 grep/喂摘要模型/append)。
 
@@ -391,7 +391,7 @@ ctx.on('user-questions/request', (req, next) => live.holdAsk(req, next), { prepe
 
 **当前已落地**：插件创建/恢复与标题固定、托管集合、任务台账、轮末判断与用户批准续做、完成播报合并和提问排队、审批竞答与异步 HTML 记录、voice-mini 轮末让出、原生面板及任务进度。
 
-**后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；记忆 M1/M2/M3/M6；字幕 U1、快捷键 H1；设置 J6、自动答疑 J7；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
+**记忆基础能力 M1/M2/M3/M6 已落地。后续按 backlog 推进**：稳定性 W1/O1/T1 与真机验收 Q1；字幕 U1、快捷键 H1；设置 J6、自动答疑 J7；语音输入 S0/S1；审批预设 P0 与分级自动审批 P1。分类器/固化 M4/M5 暂缓，L3 摘要 M7 和多化身 A1 条件触发。唤醒词、跨平台移植不在当前范围。
 
 ## 17. 平台移植性(为什么先只做 DSH)
 

@@ -43,3 +43,13 @@ recall 的 query 不得空白；英文不分大小写，按空白/标点切词�
 插件 session/event 只为当前托管会话和配置的 jarvisSessionId 调用 captureTemp，不等待写盘。映射与写入失败由 debug 记录，异常及日志异常均不返回宿主；移出托管只影响此后事件，已经接受的异步写入照常完成。不会往 DSH 会话日志追加自定义事件。
 
 2 MiB 等于 2,097,152 字节（UTF-8 JSONL，包括换行），检查与实际写入共用 store 的会话锁。恰好可填满时写普通事件，下一条将超限时只写 `{session,at,type:"truncated"}`，不携带被丢弃事件的正文；当日标记后不再追加。预先已有超大文件不删旧内容，补一次标记即可；若尾行残缺会先补换行。UTC 次日或其他会话独立恢复。真实磁盘错误仍由 appendTemp reject，captureTemp 吞掉并记录。
+
+## M6 稳定的人设记忆 section
+
+`MemoryStore.version(scope = 'general')` 返回进程内共享版本；同一真实目录的实例和配置别名共享计数。成功 `writeLong`（含同 id 替换）和实际删除的 `removeLong` 各推进一次；失败、缺失删除、读取、其他 scope 和 temp 不影响 general 版本。通过 raw lock callback 或外部编辑文件不会通知此版本；general 修改方应使用上述长期写删接口，外部编辑后重启插件重新加载。
+
+`snapshotLong(scope)` 在单个读锁内返回 `{version, files:[{name,html}]}`，版本与内容属于同一个快照，不嵌套调用锁。`MemorySection.refresh()` 仅当 general version 与缓存不同时读取该快照，并合并并发刷新。合法条目按 created 倒序、同时间按 id 排序，最多20条，仅输出 key；换行折叠，总文本（标题/列表标记在内）不超过1500 Unicode码点，不拆emoji。空库或没有可用条目返回空串，损坏HTML跳过，I/O失败保留旧缓存并日志记录，不更新已缓存版本，下一次组装会重试。
+
+为遵守“同version不变”，到期条目只在初次加载或version变化重建时过滤，时间经过不会单独触发文本改变；到期清理由未来 M5 推进物理删除及版本。查询词、轮次、会话临时记录和组装变量不会触发重排或读取。JavaScript string 是原始值；测试同时检查 strictEqual 和没有再次调用 snapshotLong，验证实际复用缓存。
+
+宿主 PromptSection.text 必须同步返回字符串，所以 `decorateJarvisAgent` 在贾维斯 agent作用域注册 `jarvis:memory`、order60、同步 cached text。宿主先调用 text，再调用异步 `system-prompt/assemble` waterfall；同作用域监听器等待 refresh 并更新当前 assembly 的对应 section，然后调用 next，确保首次及remember后的下一次真实组装包含新内容。无记忆时为空且宿主不显示；不会注册到全局或worker作用域。若key含 `{{`，组装使用专属 `jarvis_memory_literal` 变量承载完整缓存值，利用宿主变量值不递归插值的契约保留模板原文，避免误展开/未知变量异常及缓存前缀变化。

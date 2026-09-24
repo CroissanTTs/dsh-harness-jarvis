@@ -18,6 +18,7 @@ import z from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { MessageId } from '@deepseek-ai/dsh-llm';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
+import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt';
 import { homedir } from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join, dirname } from 'node:path';
@@ -33,6 +34,7 @@ import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
 import { MemoryStore } from './memory/store.ts';
+import { MemorySection } from './memory/section.ts';
 import { captureTemp, type CaptureSession } from './memory/capture.ts';
 import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
@@ -1157,7 +1159,24 @@ function decorateJarvisAgent(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
       order: 50,
       text: () => COMMANDER_PERSONA,
     });
-    debug(entry, 'persona section registered OK');
+    const memorySection = new MemorySection(deps.memory, {
+      onError: error => debug(entry, 'memory section failed: ' + (error instanceof Error ? error.message : String(error))),
+    });
+    sp?.section?.({ name: 'jarvis:memory', order: 60, text: () => memorySection.text() });
+    // DSH evaluates text synchronously before this awaited, agent-scoped assembly waterfall.
+    agentCtx.on('system-prompt/assemble' as any, async (assembly: PromptAssembly, _context: unknown, next: () => Promise<PromptAssembly>) => {
+      const section = assembly.sections.find(section => section.name === 'jarvis:memory');
+      if (section) {
+        section.text = await memorySection.refresh();
+        if (section.text.includes('{{')) {
+          // Variable values are not interpolated again: preserve literal templates in remembered keys.
+          assembly.variables.jarvis_memory_literal = section.text;
+          section.text = '{{jarvis_memory_literal}}';
+        }
+      }
+      return next();
+    });
+    debug(entry, 'persona and memory sections registered OK');
   });
 
   registerJarvisTools(agentCtx, entry, deps);

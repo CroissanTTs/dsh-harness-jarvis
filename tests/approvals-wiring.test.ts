@@ -7,6 +7,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { apply, Config } from '../src/index.ts';
+import { MemoryStore } from '../src/memory/store.ts';
 import { TaskLedger } from '../src/tasks.ts';
 import { LiveState, PENDING_GRACE_MS } from '../src/live-state.ts';
 
@@ -30,7 +31,7 @@ afterEach(async () => {
 function start(overrides: Record<string, unknown> = {}) {
   const ctx: any = { get: (name: string) => services[name], provide() {}, inject() {},
     on: (name: string, callback: any) => listeners.set(name, callback) };
-  dispose = apply(ctx, { audioDir: dir, approvalsDir: approvals, managedFile: join(dir, 'managed.json'),
+  dispose = apply(ctx, { audioDir: dir, memoryRoot: dir, approvalsDir: approvals, managedFile: join(dir, 'managed.json'),
     tasksFile: join(dir, 'tasks.json'), lockFile: join(dir, 'lock.json'), ...overrides });
 }
 async function files(count = 1): Promise<string[]> {
@@ -58,6 +59,22 @@ describe('等价类', () => {
     assert.match(html, /cwd="\/full\/path\/to\/project"/);
     assert.match(html, /<context>latest request<\/context>/);
     assert.match(html, /allow="true" source="user" reason=""/);
+  });
+  it('审批结果不等待approvals读锁，异步记录等锁释放后发布', async () => {
+    const store = new MemoryStore({ rootDir: dir });
+    let release!: () => void, begun!: () => void;
+    const started = new Promise<void>(resolve => { begun = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const held = store.withReadLock('approvals', async () => { begun(); await gate; });
+    await started;
+    try {
+      start();
+      assert.equal(await outcome('allowed-once'), 'allowed-once');
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.equal(existsSync(approvals), false);
+      release(); await held;
+      assert.equal((await files()).length, 1);
+    } finally { release(); await held; }
   });
   it('台账原话优先并在等待及后续轮次变化前保存操作快照', async () => {
     const ledger = new TaskLedger(join(dir, 'tasks.json'));

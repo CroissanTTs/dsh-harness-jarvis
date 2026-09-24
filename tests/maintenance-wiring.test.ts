@@ -21,7 +21,7 @@ afterEach(() => {
 });
 function start(audioDir = dir): void {
   dispose = apply({ inject() {}, get() {}, on() {}, provide() {} } as any, {
-    audioDir, managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
+    memoryRoot: dir, audioDir, managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
     lockFile: join(dir, 'lock.json'),
   });
 }

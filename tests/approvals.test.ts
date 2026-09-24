@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fingerprint, renderApprovalHtml, approvalFileName, type ApprovalRecord } from '../src/approvals.ts';
 import * as approvals from '../src/approvals.ts';
+import { MemoryStore } from '../src/memory/store.ts';
 import { writeApproval } from '../src/approval-store.ts';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'jv-approvals-')); });
 afterEach(() => { chmodSync(dir, 0o700); rmSync(dir, { recursive: true, force: true }); });
+const store = (approvalsDir: string) => new MemoryStore({ rootDir: dir, approvalsDir });
 const record = (): ApprovalRecord => ({
   fingerprint: 'bash:rm-rf-node_modules', ts: '2026-09-24T10:30:45.123Z',
   session: { id: 'worker', cwd: '/workspace/project', managed: true },
@@ -43,7 +45,7 @@ describe('等价类', () => {
     assert.match(html, /<tier value="" notes="Phase1:未分级"/);
   });
   it('创建缺失目录并完整原子发布 HTML', async () => {
-    const path = await writeApproval(join(dir, 'memory', 'approvals'), record());
+    const path = await writeApproval(store(join(dir, 'memory', 'approvals')), record());
     assert.equal(readFileSync(path!, 'utf8'), renderApprovalHtml(record()));
     assert.equal(readdirSync(join(dir, 'memory', 'approvals')).length, 1);
   });
@@ -65,9 +67,9 @@ describe('边界值', () => {
   it('同秒并发记录追加 -2 且已有文件绝不覆盖', async () => {
     const first = approvalFileName(record().fingerprint, record().ts);
     writeFileSync(join(dir, first), 'existing');
-    const paths = await Promise.all([writeApproval(dir, record()), writeApproval(dir, record())]);
+    const paths = await Promise.all([writeApproval(store(dir), record()), writeApproval(store(dir), record())]);
     assert.equal(readFileSync(join(dir, first), 'utf8'), 'existing');
-    assert.deepEqual(paths.map(p => p!.slice(dir.length + 1)).sort(), [first.replace('.html', '-2.html'), first.replace('.html', '-3.html')]);
+    assert.deepEqual(paths.map(p => basename(p!)).sort(), [first.replace('.html', '-2.html'), first.replace('.html', '-3.html')]);
     assert.equal(readdirSync(dir).length, 3);
   });
 });
@@ -95,14 +97,14 @@ describe('异常路径', () => {
   it('无写权限失败不抛出，错误回调也不能泄漏异常', async () => {
     chmodSync(dir, 0o500);
     let errors = 0;
-    assert.equal(await writeApproval(dir, record(), () => { errors++; throw new Error('logging failed'); }), undefined);
+    assert.equal(await writeApproval(store(dir), record(), () => { errors++; throw new Error('logging failed'); }), undefined);
     assert.equal(errors, 1);
     assert.deepEqual(readdirSync(dir), []);
   });
   it('父路径为文件时不抛出且原文件不变', async () => {
     const path = join(dir, 'file');
     writeFileSync(path, 'keep');
-    assert.equal(await writeApproval(join(path, 'approvals'), record()), undefined);
+    assert.equal(await writeApproval(store(join(path, 'approvals')), record()), undefined);
     assert.equal(readFileSync(path, 'utf8'), 'keep');
   });
 });

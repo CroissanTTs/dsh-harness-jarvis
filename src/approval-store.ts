@@ -1,11 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, link, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { MemoryStore } from './memory/store.ts';
 import { approvalFileName, renderApprovalHtml, type ApprovalRecord } from './approvals.ts';
 
 /** Publish a complete file without overwriting an existing approval, even across writers. */
-export async function writeApproval(directory: string, record: ApprovalRecord,
+export async function writeApproval(store: MemoryStore, record: ApprovalRecord,
   onError?: (error: unknown) => void): Promise<string | undefined> {
+  try {
+    return await store.withWriteLock('approvals', directory => publishApproval(directory, record));
+  } catch (error) {
+    try { onError?.(error); } catch { /* Logging must never change an approval outcome. */ }
+    return undefined;
+  }
+}
+
+async function publishApproval(directory: string, record: ApprovalRecord): Promise<string> {
   let temporary: string | undefined;
   try {
     const name = approvalFileName(record.fingerprint, record.ts);
@@ -23,9 +33,6 @@ export async function writeApproval(directory: string, record: ApprovalRecord,
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
     }
-  } catch (error) {
-    try { onError?.(error); } catch { /* Logging must never change an approval outcome. */ }
-    return undefined;
   } finally {
     if (temporary) {
       try { await unlink(temporary); } catch { /* Best-effort cleanup of this writer's temporary file. */ }

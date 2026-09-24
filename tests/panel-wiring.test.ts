@@ -67,7 +67,7 @@ function start(deferred = false): () => void {
   };
   const firstApplyTimer = timers.length;
   const dispose = apply(context, {
-    audioDir: dir, managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
+    audioDir: dir, memoryRoot: dir, lockFile: join(dir, 'lock.json'), managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
     runtimeFile: join(dir, 'runtime.json'),
   })!;
   // apply schedules startup cache maintenance before services can spawn a panel.

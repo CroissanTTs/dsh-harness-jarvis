@@ -32,6 +32,7 @@ import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
+import { MemoryStore } from './memory/store.ts';
 import { writeApproval } from './approval-store.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
@@ -129,6 +130,7 @@ export const Config = z.object({
   audioDir: z.string().default('~/.dsh/jarvis'),
   managedFile: z.string().default('~/.dsh/jarvis/managed.json'),
   tasksFile: z.string().default('~/.dsh/jarvis/tasks.json'),
+  memoryRoot: z.string().default('~/.dsh/jarvis'),
   approvalsDir: z.string().default('~/.dsh/jarvis/memory/approvals'),
   lockFile: z.string().default('~/.dsh/jarvis/lock.json'),
   runtimeFile: z.string().default('~/.dsh/jarvis/runtime.json'),
@@ -156,6 +158,7 @@ interface JarvisConfig {
   audioDir: string;
   managedFile: string;
   tasksFile: string;
+  memoryRoot: string;
   approvalsDir: string;
   lockFile: string;
   runtimeFile: string;
@@ -208,6 +211,7 @@ const COMMANDER_PERSONA = [
 interface JarvisDeps {
   managed: ManagedSet;
   ledger: TaskLedger;
+  memory: MemoryStore;
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
@@ -216,9 +220,6 @@ interface JarvisDeps {
 }
 
 type SpeakResult = 'voice-mini' | 'built-in' | 'muted' | 'failed';
-
-interface LockState { holder?: string; leaseUntil?: number; }
-function loadLock(_file: string): LockState { return {}; }
 
 /** Built-in TTS: edge-tts (free Microsoft neural voices) synthesized in a
  *  child process (the WebSocket flakes ~50% in the Electron main process but is
@@ -400,7 +401,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     (e) => debug(entry, 'tasks.json write failed: ' + (e instanceof Error ? e.message : String(e))));
   const pruneTasks = setInterval(() => ledger.prune(Date.now()), 60_000);
   pruneTasks.unref();
-  const lock = loadLock(entry.lockFile);
+  const memory = new MemoryStore({
+    rootDir: resolveDir(entry.memoryRoot), lockFile: resolveDir(entry.lockFile),
+    approvalsDir: resolveDir(entry.approvalsDir),
+    onError: e => debug(entry, 'memory lock diagnostic failed: ' + (e instanceof Error ? e.message : String(e))),
+  });
   const live = new LiveState(entry.jarvisSessionId);
 
   /** Every visible worker (not Jarvis, not archived), flagged by whether it is handed to Jarvis. */
@@ -433,6 +438,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   const deps: JarvisDeps = {
     managed,
     ledger,
+    memory,
     sessionRows,
     setManaged,
     say: (text) => speakAsJarvis(builtInTts, entry, text),
@@ -883,7 +889,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           (error instanceof Error ? error.message : String(error)));
         try {
           if (!snapshot) { onError(metadataError); return; }
-          void writeApproval(resolveDir(entry.approvalsDir), {
+          void writeApproval(memory, {
             ...snapshot, ts, decision: { allow: outcome === 'allowed-once', source: 'user', reason: '' },
           }, onError);
         } catch (error) { try { onError(error); } catch {} }
@@ -900,7 +906,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     ctx.logger?.warn?.('dsh-harness-jarvis: external voice:tts detected');
   });
 
-  void lock; void llm; void builtInTts;
+  void llm; void builtInTts;
 
   // Cordis convention: apply() returns a disposer that runs when this plugin
   // context is torn down (DSH quits / plugin unloads) — kill the悬浮窗 panel

@@ -87,7 +87,7 @@ async function startPlugin(overrides: Record<string, unknown> = {}): Promise<voi
   dispose?.();
   listeners.clear();
   dispose = apply(context, {
-    audioDir: dir, managedFile: join(dir, 'managed.json'),
+    audioDir: dir, memoryRoot: dir, lockFile: join(dir, 'lock.json'), managedFile: join(dir, 'managed.json'),
     tasksFile: join(dir, 'tasks.json'), runtimeFile: join(dir, 'runtime.json'),
     ...overrides,
   });

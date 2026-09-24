@@ -80,7 +80,7 @@ async function startPlugin(): Promise<void> {
   injections.length = 0;
   listeners.clear();
   dispose = apply(context, {
-    jarvisSessionId: session.id, audioDir: dir,
+    jarvisSessionId: session.id, audioDir: dir, memoryRoot: dir, lockFile: join(dir, 'lock.json'),
     managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
     runtimeFile: join(dir, 'runtime.json'),
   });

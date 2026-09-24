@@ -49,7 +49,7 @@
 
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
-| M1 | 记忆存储底座：目录布局 + 按 store 读写锁 | — | 中 | 待办 |
+| M1 | 记忆存储底座：目录布局 + 按 store 读写锁 | — | 中 | 已完成（`m1-memory-store-20260924`） |
 | M2 | `remember` / `recall` 工具 | M1 | 中 | 待办 |
 | M3 | 自动抓取 temp（pass A）（与 M2 可并行） | M1 | 中 | 待办 |
 | M6 | 长期记忆注入贾维斯人设（L1 section） | M2 | 小 | 待办 |
@@ -342,7 +342,9 @@
   ```
   提供 `renderMemory` / `parseMemory`（纯函数，转义与反转义对称）。
 - **测试**：锁的并发语义（两个写串行、读写互斥、多读并发、写优先）、路径安全化（`../x`、空串、Unicode）、HTML 往返、`lock.json` 残留清理、磁盘写失败时锁能释放。
-- **实现记录**：（空）
+- **实现记录**（Codex M1 / 2026-09-24）：新增 `src/memory/{store,lock,journal,format}.ts`，提供按会话 / general / approvals 分离且写优先的进程内读写锁、UTC 日期 JSONL、原子长期 HTML 读写、对称转义解析与诊断恢复；`src/memory/README.md` 固定 M2/M3/J3/P0 的输入、返回、错误、锁与路径契约。`src/index.ts` 新增 `memoryRoot` 配置并替换空 loadLock 接线；J3 保留先返回 DSH 审批结果、setImmediate 异步落盘及 hard-link 防覆盖，只把完整发布过程迁入 approvals 写锁。**J3 旧记录的 general 锁提醒按本条及用户要求更正为独立 approvals 锁**，不修改其他条目。
+  - 边界决定：空会话拒绝，general/approvals 保留；有损字符、大写、超长及包含编码分隔符的名称追加摘要，防止路径穿越、转换碰撞和 macOS 大小写覆盖；配置路径解析真实祖先，路径别名共享锁及诊断。temp 的 at/since 为毫秒、since 包含边界，at 限制为 epoch 至 UTC 9999 年末；损坏行跳过，残缺尾行补换行后再追加。长期相同 id 原子替换，listLong 返回 basenames，readLong 返回原始 HTML 以兼容审批格式；detail 按 Unicode 码点最多 500。诊断超过 60 秒清理，诊断错误不阻断业务，真实 I/O 错误释放锁后 reject；复合锁 callback 不可重入，M3 容量检查须在 appendTemp 内同锁扩展。
+  - 测试：新增 27 项存储测试与 1 项真实审批接线测试，按等价类 / 边界值 / 异常路径覆盖锁调度、路径与大小写、配置别名、HTML 往返、原子发布失败、诊断残留及失败恢复；插件 **346/346**、面板 **222/222**、`npm run build`、`macos/build.sh`、`git diff --check` 全通过。独立审查发现的路径碰撞、别名锁 / 诊断和 JSONL 残片问题均补回归并修复，复验无合并阻断。标签 `m1-memory-store-20260924` 定位单个实现提交；合入后主目录重建插件，需用户重启 DSH 并运行 `npm run smoke`。面板代码未改，无需单独重启；人工可触发一次审批，确认先收到结果、随后 memory/approvals 出现可读记录。
 
 ### M2 `remember` / `recall` 工具
 

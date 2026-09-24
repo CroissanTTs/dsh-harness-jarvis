@@ -220,3 +220,13 @@
 先读 docs/superpowers/plans/2026-09-24-jarvis-backlog.md 的「0. 使用方法」「2. 通用约定」和条目 R3 全文，然后严格按使用方法执行：确认前置（R1、R2、SEC1）已在 main 上 → 按通用约定 2.3 从最新 main 建独立 worktree 和分支 codex/r3-awesome（不要在主目录切分支） → 把 R3 状态改为进行中 → 实现并按“等价类 / 边界值 / 异常路径”写测试 → 插件测试、面板测试、构建全部通过后提交 → 更新状态与实现记录 → 快进合回 main，并在主目录重新构建 → 汇报。
 本条注意：只准备条目文件和提交步骤，不要替我开 PR。
 ```
+
+## 追加
+
+### 26. J5a 关闭完成判断时的重复播报
+
+```text
+在 /Users/zane/Vibe coding/dsh-plugin-discovery/dsh-harness-jarvis 实现待办条目 J5a（关闭完成判断时的重复播报），用中文回复我。
+先读 docs/superpowers/plans/2026-09-24-jarvis-backlog.md 的「0. 使用方法」「2. 通用约定」和条目 J5a 全文，然后严格按使用方法执行：确认前置（J5）已在 main 上 → 按通用约定 2.3 从最新 main 建独立 worktree 和分支 codex/j5a-judge-off-silence（不要在主目录切分支） → 把 J5a 状态改为进行中 → 实现并按“等价类 / 边界值 / 异常路径”写测试 → 插件测试、面板测试、构建全部通过后提交 → 更新状态与实现记录 → 快进合回 main，并在主目录重新构建 → 汇报。
+本条注意：只改贾维斯仓库，不动 voice-mini；claimsTurnEnd 保持现状；判断关闭的分支放进 src/judge.ts 的 planTurnEnd，不要在 index.ts 里加分支；README 配置说明补一句"未装 voice-mini 且关闭判断时轮末不播报"。可以和 S1 并行。
+```

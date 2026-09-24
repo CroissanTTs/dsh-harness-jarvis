@@ -257,6 +257,26 @@ public struct ChatMessage: Sendable, Equatable, Identifiable {
   }
 
   public var isMine: Bool { role == "user" }
+
+  /// Laying out a few thousand characters stalls the quick bar for seconds
+  /// when it opens, so history bubbles show a cut-down copy.
+  public static let previewCharacters = 280
+  public static let previewLines = 8
+
+  public var preview: String { Self.preview(text) }
+
+  public static func preview(_ text: String) -> String {
+    var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+    var cut = lines.count > previewLines
+    if cut { lines = Array(lines.prefix(previewLines)) }
+    var s = lines.joined(separator: "\n")
+    if s.count > previewCharacters {
+      s = String(s.prefix(previewCharacters))
+      cut = true
+    }
+    guard cut else { return text }
+    return s.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+  }
 }
 
 /// GET /jarvis/messages. Tool results and empty messages are dropped (spec §6.3);

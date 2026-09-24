@@ -136,6 +136,8 @@ public actor DemoAPI: JarvisAPI {
       return [
         ChatMessage(id: "\(session)-u", role: "user", text: "修完测试后跑一遍 lint"),
         ChatMessage(id: "\(session)-a", role: "assistant", text: "lint 通过，改了 2 个文件的导入顺序。"),
+        ChatMessage(id: "\(session)-r", role: "assistant", text: "## 本轮报告\n"
+          + (1...40).map { "- 第 \($0) 项：检查了模块依赖、导入顺序和测试覆盖，没有发现新的问题。" }.joined(separator: "\n")),
       ]
     }
     return [

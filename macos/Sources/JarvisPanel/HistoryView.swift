@@ -11,14 +11,12 @@ struct HistoryView: View {
   var growsUp: Bool
 
   var body: some View {
-    ViewThatFits(in: .vertical) {
-      content
-      ScrollView(.vertical, showsIndicators: false) { content }
-        .defaultScrollAnchor(growsUp ? .bottom : .top)
-    }
-    .frame(width: QuickBarView.width)
-    .frame(maxHeight: Self.maxHeight)
-    .mask(fade)
+    ScrollView(.vertical, showsIndicators: false) { content }
+      .defaultScrollAnchor(growsUp ? .bottom : .top)
+      .frame(width: QuickBarView.width)
+      .frame(maxHeight: Self.maxHeight)
+      .fixedSize(horizontal: false, vertical: true)
+      .mask(fade)
     .hitArea()
   }
 
@@ -45,7 +43,7 @@ struct HistoryView: View {
     HStack {
       if m.isMine { Spacer(minLength: 40) }
       VStack(alignment: .leading, spacing: 4) {
-        Text(m.text)
+        Text(m.preview)
           .font(.system(size: 12))
           .foregroundStyle(Theme.text)
           .textSelection(.enabled)

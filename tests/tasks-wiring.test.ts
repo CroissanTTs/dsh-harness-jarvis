@@ -69,7 +69,7 @@ beforeEach(async () => {
     inject: (names: string[], callback: (ctx: any) => void) => {
       if (names.every(name => name in services)) callback(ctx);
     },
-    provide() {}, on(name: string, callback: (...args: any[]) => unknown) {
+    provide(name: string, service: unknown) { services[name] = service; }, on(name: string, callback: (...args: any[]) => unknown) {
       listeners.set(name, [...(listeners.get(name) ?? []), callback]);
     },
     tools: { register: (tool: any) => tools.set(tool.name, tool) },
@@ -150,6 +150,17 @@ function delayedVerdict(): () => void {
 }
 
 describe('等价类', () => {
+  it('提供 claimsTurnEnd 并随台账从 open、judging 到 done 变化', async () => {
+    const service = context.get('jarvis');
+    assert.equal(service.claimsTurnEnd('a'), false);
+    await tools.get('inject_to_session').execute({ session: 'a', message: '执行任务' });
+    assert.equal(service.claimsTurnEnd('a'), true);
+    event('a', 'turn/end', 'completed');
+    assert.equal(tasks()[0].status, 'judging');
+    assert.equal(service.claimsTurnEnd('a'), true);
+    await settled(() => tasks()[0]?.status === 'done');
+    assert.equal(service.claimsTurnEnd('a'), false);
+  });
   it('completed 使用默认模型完成裁决并记账，不向 Jarvis 回注 satisfied', async () => {
     const defaults = Config({}) as any;
     assert.equal(defaults.judgeEnabled, true);
@@ -241,6 +252,18 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('判断关闭时不接管，重新启用后等待续轮仍接管，移出即放弃', async () => {
+    await tools.get('inject_to_session').execute({ session: 'a', message: '任务' });
+    await startPlugin({ judgeEnabled: false });
+    assert.equal(context.get('jarvis').claimsTurnEnd('a'), false);
+    await startPlugin({ judgeEnabled: true });
+    verdict = { verdict: 'unsatisfied', summary: '尚未完成', missing: '补测试' };
+    event('a', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'unsatisfied');
+    assert.equal(context.get('jarvis').claimsTurnEnd('a'), true);
+    await tools.get('release_session').execute({ session: 'a' });
+    assert.equal(context.get('jarvis').claimsTurnEnd('a'), false);
+  });
   it('未托管或没有任务时不裁决，turn-stopping 不注册裁决监听', async () => {
     assert.equal(listeners.has('agent/turn-stopping'), false);
     event('a', 'turn/end', 'completed');
@@ -289,6 +312,12 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  it('未知、空或非字符串会话 id 不接管且不抛错', () => {
+    const service = context.get('jarvis');
+    for (const id of ['unknown', '', ' ', undefined, null, 123]) {
+      assert.equal(service.claimsTurnEnd(id), false);
+    }
+  });
   it('error 保留 open，aborted 结束为 dropped，均不调用模型', async () => {
     await tools.get('inject_to_session').execute({ session: 'a', message: '完成测试' });
     event('a', 'turn/end', 'error');

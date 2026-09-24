@@ -29,7 +29,7 @@
 
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
-| J5 | voice-mini 让出托管会话的轮末播报（J2 上线后会重复播报，优先做） | J2 | 小 | 待办 |
+| J5 | voice-mini 让出托管会话的轮末播报（J2 上线后会重复播报，优先做） | J2 | 小 | 已完成（`j5-voice-mini-yield-20260924`） |
 | J4 | 输出协调（播报合并、同一时间只问一个问题） | J2 | 中 | 待办 |
 | J0 | 修复贾维斯会话标题设置（改用 `rename`）（可并行） | — | 小 | 待办 |
 | J3 | 审批记录（带上下文写入长期记忆）（可并行） | —（J1 可选增强） | 中 | 待办 |
@@ -299,7 +299,9 @@
   3. 贾维斯没装时 `jarvisService` 为 undefined，voice-mini 行为不变。
 - **测试**：voice-mini 侧仿照现有 `test-jarvis-speech.mjs` 加检查（claims 为 true 时不入队、false 时照旧、服务缺失时照旧、claimsTurnEnd 抛错时照旧）；贾维斯侧把判定抽成纯函数测三段式。
 - **注意**：这是跨仓库改动，两边各自提交；voice-mini 提交信息注明依赖贾维斯的 `claimsTurnEnd`。
-- **实现记录**：（空）
+- **实现记录**（2026-09-24）：Jarvis 新增 `src/turn-end.ts` 纯判定、`src/index.ts` 的 `claimsTurnEnd` 服务及 `tests/turn-end.test.ts` / `tests/tasks-wiring.test.ts` 测试；仅托管、有未结任务且启用判断时接管。voice-mini 的 `src/index.ts` 在 `turn/end` 开头检查严格 `true`，缺失或抛错均回退原播报，状态提示音及工具播报不变；扩展 `test-jarvis-speech.mjs` 并同步受版本管理的 `lib/index.js`（包含基线源码已有的 replay 播报信号两行）。两侧测试按等价类 / 边界值 / 异常路径分组，Jarvis 插件 **171/171**、面板 **208/208**、voice-mini **41/41** 通过，两插件构建通过，独立代码审查无待修问题。
+  - 提交：Jarvis 标签 `j5-voice-mini-yield-20260924` 指向含本记录的最终提交（`git rev-parse j5-voice-mini-yield-20260924` 可取提交号）；voice-mini `27ec197`，提交信息已注明依赖 Jarvis 的 `claimsTurnEnd`。两仓库均从各自最新 `main` 建独立 worktree 和同名分支 `codex/j5-voice-mini-yield`，前置 J2 已在 Jarvis `main`。
+  - 按条目原条件实现，没有扩大 J2 行为：`judgeEnabled=false` 时 voice-mini 照旧，J2 仍有模板播报，此配置下的重复播报边界留维护人确认。未做真实 DSH 人工验收；重启 DSH 后检查托管任务只有 Jarvis 轮末播报、普通会话照旧、状态提示音和工具播报照旧；无需重启面板。
 
 ## 4. 条目详情：记忆系统（§10）
 

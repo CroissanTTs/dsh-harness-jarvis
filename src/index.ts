@@ -46,6 +46,7 @@ import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { CompletionJudge } from './completion.ts';
+import { claimsTurnEnd } from './turn-end.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -416,6 +417,11 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     sessionId: entry.jarvisSessionId,
     cwd: resolveDir(entry.jarvisCwd),
     speech: (signal: unknown) => live.speechSignal(signal),
+    claimsTurnEnd: (id: string) => claimsTurnEnd({
+      managed: managed.has(id),
+      task: managed.has(id) ? ledger.current(id) : undefined,
+      judgeEnabled: entry.judgeEnabled,
+    }),
   });
   debug(entry, 'provided "jarvis" service (sessionId=' + entry.jarvisSessionId + ')');
   ctx.logger?.warn?.('dsh-harness-jarvis: provided "jarvis" service');

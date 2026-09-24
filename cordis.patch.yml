@@ -1,4 +1,7 @@
-# dsh-harness-jarvis bundle layer — SCAFFOLD. Neutral defaults only.
+# dsh-harness-jarvis bundle layer. Configure provider/model for your profile.
+# Required inject services: tools, userQuestions, jobs.
+# agentLoop creates Jarvis; llm, systemPrompt, webServer, settings and title
+# services are attached by the plugin when available, not instantiated here.
 # Users override per-profile in their own cordis.patch.yml, addressing this
 # row BY ID (never insert a second row with the same id).
 #
@@ -10,15 +13,15 @@
       name: 'dsh-harness-jarvis'
       config:
         locale: zh                 # zh | en
-        audioDir: ~/.dsh/jarvis    # mem/lock/runtime live under here
+        audioDir: ~/.dsh/jarvis    # speech cache and debug.log
         managedFile: ~/.dsh/jarvis/managed.json   # 托管集 (SPEC §9.2)
-        lockFile: ~/.dsh/jarvis/lock.json         # 输出锁持久化 (崩溃恢复)
+        lockFile: ~/.dsh/jarvis/lock.json         # memory write diagnostics; not a cross-process lock
         runtimeFile: ~/.dsh/jarvis/runtime.json   # 悬浮窗 runtime (origin+token, SPEC §12)
-        titlePrefix: '贾维斯-'     # worker title 前缀 (SPEC §9.2)
-        ttsBackend: edge           # 内置 TTS: edge (SPEC §5);kokoro 后续
+        titlePrefix: '贾维斯-'     # reserved; no worker renaming
+        ttsBackend: edge           # built-in TTS currently supports edge only
         edgeVoice: zh-CN-YunjianNeural  # 成熟男声(贾维斯默认)
-        archiveIdleDays: 7         # 闲置归档阈值 (SPEC §10.3 F)
+        archiveIdleDays: 7         # reserved; automatic archival is not implemented
         provider: bailian          # 百炼 provider (SPEC §9.1)
-        model: qwen3.8-max-0902  # 百炼 model (user's configured model)
+        model: qwen3.8-max-0902  # replace with a model configured in your DSH profile
         jarvisSessionId: jarvis    # createAgent sessionId
         jarvisCwd: ~/jarvis  # visible workspace (not hidden ~/.dsh/)

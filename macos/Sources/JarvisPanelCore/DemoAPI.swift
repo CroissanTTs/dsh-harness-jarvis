@@ -66,7 +66,7 @@ public actor DemoAPI: JarvisAPI {
   }
 
   private let presetPending = PendingItem(id: "demo-p3", kind: .approval, session: "demo-hammer",
-    title: "请求执行", detail: "swift test --package-path macos", note: "只允许此工具和工作区中的相同请求。", canAlwaysAllow: true)
+    title: "请求执行", detail: "npm install", note: "只允许此工具和工作区中的相同请求。", canAlwaysAllow: true)
 
   /// Answers and read state last for one pass through the scenes.
   @discardableResult
@@ -161,7 +161,7 @@ public actor DemoAPI: JarvisAPI {
         throw JarvisAPIError.http(404)
       }
       guard item.canAlwaysAllow else { throw JarvisAPIError.http(400) }
-      savedRules.append(ApprovalRule(fingerprint: "demo-read-tests", tool: "shell",
+      savedRules.append(ApprovalRule(fingerprint: "shell:npm-install", tool: "shell",
                                     workspace: "/Users/demo/hammer", createdAt: Date().timeIntervalSince1970 * 1000))
       answered.insert(id)
     case .decision(let id, _), .choice(let id, _), .text(let id, _):

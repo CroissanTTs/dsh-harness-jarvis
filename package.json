@@ -1,7 +1,7 @@
 {
   "name": "dsh-harness-jarvis",
-  "version": "0.1.0-scaffold",
-  "description": "Jarvis commander plugin for DeepSeek Harness: a瘦编排 agent that manages multiple worker sessions (inject/monitor/续轮), relay-approves, remembers (two-tier temp/long-term), via a dsh-notch-style悬浮窗. MVP: text-input entry (no STT), no danger-full-access. Per SPEC v0.9.",
+  "version": "0.1.0",
+  "description": "A DSH Desktop plugin for coordinating managed sessions, approvals, spoken updates, and local memory.",
   "license": "MIT",
   "author": "zane",
   "keywords": [
@@ -19,13 +19,18 @@
     "scripts/smoke.mjs",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/synth-edge.mjs",
+    "scripts/readme-config.mjs",
+    "docs/images",
+    "docs/superpowers/plans/2026-09-24-jarvis-backlog.md"
   ],
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test tests/*.test.ts",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "docs:config": "npm run build && node scripts/readme-config.mjs"
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" }

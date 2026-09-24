@@ -24,6 +24,7 @@ final class DemoAPITests: XCTestCase {
     await api.setScene(8)
     let snapshot = try await api.snapshot()
     let item = try XCTUnwrap(snapshot.pending.first(where: { $0.canAlwaysAllow }))
+    XCTAssertEqual(item.detail, "npm install", "Preset example must use an operation eligible under P1")
     try await api.answer(.always(id: item.id))
     let rules = try await api.approvalRules()
     XCTAssertEqual(rules.count, 1)

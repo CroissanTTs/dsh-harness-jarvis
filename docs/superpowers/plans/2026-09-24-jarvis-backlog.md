@@ -87,7 +87,7 @@
 | 编号 | 条目 | 前置 | 规模 | 状态 |
 |---|---|---|---|---|
 | SEC1 | 安全审查与加固 | 阶段 2–8 中计划发布的条目 | 中 | 待办 |
-| R1 | README、LICENSE、包信息 | — | 小 | 待办 |
+| R1 | README、LICENSE、包信息 | — | 小 | 已完成（`r1-readme-20260924`） |
 | R2 | 面板随插件分发（预编译通用二进制） | R1 | 中 | 待办 |
 | R3 | 提交 awesome-dsh-plugin 收录 | R1、R2、SEC1 | 小 | 待办 |
 
@@ -667,7 +667,9 @@
   - `package.json`：`version` 改 `0.1.0`；`description` 重写为一句准确的英文，不含营销词，以句号结尾（awesome 列表会直接引用）。
   - 检查 `cordis.patch.yml` 与实际需要的服务一致。
 - **验收**：`npm pack --dry-run` 列出的文件包含 README、LICENSE、lib、cordis.patch.yml。
-- **实现记录**：（空）
+- **实现记录**（Codex R1 / 2026-09-24）：新增中英双语 README 与 MIT LICENSE（zane），package/lock 版本统一为 0.1.0，description 改为准确英文句子。README 只列已完成能力，写明源码安装、首次使用、voice-mini 配合、默认关闭的自动审批/代答及尚未完成的 R2/SEC1/S0/S1/Q1；隐私区区分本机存储与模型/edge-tts 网络处理。`scripts/readme-config.mjs` 从实际 Config/SettingsSchema 生成全部 24 个字段的配置表，提供 `npm run docs:config` 和 --check。核对 cordis.patch 与插件服务接线一致，仅纠正旧注释，不改变运行配置。
+  - Snapshotter 生成场景 18/19/20 并逐张打开检查，保存到 `docs/images/`；修正场景 19 的旧演示命令为符合 P1 预设规则的 npm install（演示数据与既有回归断言，未改真实审批行为）。files 补齐截图、README 引用的清单、生成脚本及此前遗漏的内置 TTS 脚本；面板二进制分发留给 R2。新增配置生成器三段式 5 项测试，Demo 断言先红后绿；插件 857/857、Swift 297/297、插件/面板构建、配置 --check、git diff --check 和 npm pack --dry-run 均通过，打包清单确认 README、LICENSE、lib、cordis.patch.yml 及截图/TTS 脚本齐全。单提交标签 `r1-readme-20260924`；合入 main 后重建，面板演示数据变更按约定重启面板，DSH 重启与 smoke 仍由用户执行。
+
 
 ### R2 面板随插件分发
 

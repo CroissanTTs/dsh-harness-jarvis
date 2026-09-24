@@ -38,6 +38,7 @@ import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
 import { sessionRow, type SessionRow } from './session-state.ts';
 import { needsRename } from './title.ts';
+import { PanelSupervisor } from './panel-supervisor.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -303,32 +304,84 @@ function writeRuntimeFile(entry: JarvisConfig, data: Record<string, unknown>): v
  *  render after restart; as a regular child it inherits the session and renders
  *  reliably (same as a manual `./jarvis-panel` launch). stdio ignored + unref'd
  *  so the host never blocks on it. The panel self-guards duplicates via pidfile. */
-/** The live panel child process (so we can kill it when the host disposes —
- *  DSH quit → orb quit, the "和 DSH 作为依赖" lifecycle). */
-let panelChild: ReturnType<typeof spawn> | null = null;
+interface PanelProcess { start(): void; dispose(): void; }
+let panelOwner: PanelProcess | null = null;
 
-function spawnPanel(entry: JarvisConfig): void {
-  const bin = join(pkgRoot, 'macos', 'jarvis-panel');
-  if (!existsSync(bin)) { debug(entry, 'panel binary not found (' + bin + ') — skipping spawn (build macos/ first)'); return; }
-  try {
-    // Kill a previous panel from an earlier apply (config reload etc.).
-    if (panelChild && !panelChild.killed) { try { panelChild.kill('SIGTERM'); } catch {} }
-    const child = spawn(bin, [], { stdio: 'ignore' });
-    child.unref();
-    panelChild = child;
-    child.on('exit', () => { if (panelChild === child) panelChild = null; });
-    debug(entry, 'spawned悬浮窗 panel (pid=' + child.pid + ', non-detached, bin=' + bin + ')');
-  } catch (e) {
-    debug(entry, 'panel spawn failed: ' + (e instanceof Error ? e.message : String(e)));
-  }
-}
+/** Each apply owns its process and timer. Replacing an owner permanently
+ *  disposes it before SIGTERM, so late events cannot affect the new owner. */
+function createPanelProcess(entry: JarvisConfig, say: JarvisDeps['say']): PanelProcess {
+  const supervisor = new PanelSupervisor();
+  let panelChild: ChildProcess | null = null;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  let started = false;
 
-/** Kill the悬浮窗 panel when this plugin context disposes (DSH quits). */
-function killPanel(entry: JarvisConfig): void {
-  if (panelChild && !panelChild.killed) {
-    try { panelChild.kill('SIGTERM'); debug(entry, 'killed悬浮窗 panel (pid=' + panelChild.pid + ')'); } catch {}
-  }
-  panelChild = null;
+  const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+    const decision = supervisor.onExit(code, signal);
+    if (decision.action === 'stay-down') {
+      debug(entry, 'panel stopped: ' + decision.reason);
+      if (decision.reason === 'crash-limit') {
+        void say('悬浮窗反复崩溃，已停止自动重启').catch(e => {
+          debug(entry, 'panel crash notification failed: ' + String(e));
+        });
+      }
+      return;
+    }
+    debug(entry, 'panel exited (code=' + code + ', signal=' + signal + '), restarting in ' + decision.delayMs + 'ms');
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      if (!disposed) spawnPanel();
+    }, decision.delayMs);
+    restartTimer.unref();
+  };
+
+  const spawnPanel = (): void => {
+    if (disposed) return;
+    const bin = join(pkgRoot, 'macos', 'jarvis-panel');
+    if (!existsSync(bin)) { debug(entry, 'panel binary not found (' + bin + ') — skipping spawn (build macos/ first)'); return; }
+    try {
+      const child = spawn(bin, [], { stdio: 'ignore' });
+      panelChild = child;
+      child.on('spawn', () => {
+        if (!disposed && panelChild === child) supervisor.markStarted();
+      });
+      const finish = (code: number | null, signal: NodeJS.Signals | null): void => {
+        if (disposed || panelChild !== child) return;
+        panelChild = null;
+        onExit(code, signal);
+      };
+      child.on('exit', finish);
+      child.on('error', error => {
+        if (disposed || panelChild !== child) return;
+        debug(entry, 'panel spawn failed: ' + error.message);
+        finish(-1, null);
+      });
+      child.unref();
+      debug(entry, 'spawned悬浮窗 panel (pid=' + child.pid + ', non-detached, bin=' + bin + ')');
+    } catch (e) {
+      debug(entry, 'panel spawn failed: ' + (e instanceof Error ? e.message : String(e)));
+      onExit(-1, null);
+    }
+  };
+
+  return {
+    start() {
+      if (disposed || started) return;
+      started = true;
+      spawnPanel();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      supervisor.markDisposed();
+      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+      const child = panelChild;
+      panelChild = null;
+      if (child && !child.killed) {
+        try { child.kill('SIGTERM'); debug(entry, 'killed悬浮窗 panel (pid=' + child.pid + ')'); } catch {}
+      }
+    },
+  };
 }
 
 export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
@@ -450,6 +503,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     onError: error => debug(entry, 'completion failed: ' + (error instanceof Error ? error.message : String(error))),
   });
 
+  const panel = createPanelProcess(entry, text => deps.say(text));
+  panelOwner?.dispose();
+  panelOwner = panel;
+
   // ── deferred services ─────────────────────────────────────────────────
   ctx.inject(['llm' as any], (llmCtx: Context) => {
     debug(entry, 'llm inject fired');
@@ -472,7 +529,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     };
     writeRt();
     ctx.inject(['desktopBrowserAccess' as any], () => writeRt());
-    spawnPanel(entry);
+    panel.start();
     webServer.register({
       kind: 'prefix', path: '/jarvis',
       handler: async (req: IncomingMessage, res: ServerResponse) => {
@@ -845,7 +902,8 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     clearInterval(pruneTasks);
     completion.dispose();
     output.dispose();
-    killPanel(entry);
+    panel.dispose();
+    if (panelOwner === panel) panelOwner = null;
   };
 }
 

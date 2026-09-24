@@ -14,6 +14,12 @@ Version 0.7.1 is the *assistant* release: quick approvals and floating chat firs
 
 The orb is a Metal particle field — a hex core that diffuses into two rings and breathes between them. Each state (idle, thinking, speaking, attention, error) has its own motion. Drag it to a screen edge and it melts flat into the wall; touch it and it blooms back.
 
+下方动图循环展示五个状态：待机 → 等待消息 → 思考 → 说话 → 需要你处理。The animation below loops through five states: idle, awaiting, thinking, speaking, and attention.
+
+<p>
+  <img src="docs/design/orb-showcase.gif" width="320" alt="贾维斯光球状态动效：待机、等待、思考、说话、需要你处理 / The orb cycling through its states">
+</p>
+
 - 交互式设计稿（克隆后本地打开即可看动效）/ Interactive design sketches, open locally after cloning:
   - [docs/design/orb-states.html](docs/design/orb-states.html) — 各状态的粒子动效与实际尺寸对比
   - [docs/design/orb-visual-direction.html](docs/design/orb-visual-direction.html) — 早期视觉方向探索

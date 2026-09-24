@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { canPresetApproval, type PresetOperation } from './approval-risk.ts';
 import { fingerprint } from './approvals.ts';
 import { atomicWrite } from './memory/journal.ts';
+import { classify } from './approval-tier.ts';
 export interface ApprovalRule { fingerprint: string; tool: string; workspace: string; createdAt: number; expiresAt?: number }
 export type ApprovalRuleKey = Pick<ApprovalRule, 'fingerprint' | 'tool' | 'workspace'>;
 export function validRuleKey(value: unknown): value is ApprovalRuleKey {
@@ -48,7 +49,7 @@ export class ApprovalPresets {
   async add(operation: PresetOperation & { expiresAt?: number }): Promise<ApprovalRule> {
     // Validate again inside the lock in case a target path changed while queued.
     return this.store.withWriteLock('preferences', async directory => {
-      if (!canPresetApproval(operation)) throw Error('Operation cannot have an approval preset');
+      if (!canPresetApproval(operation) || classify({ ...operation, cwd:operation.workspace }) === 'high') throw Error('Operation cannot have an approval preset');
       const now = this.now();
       if (operation.expiresAt !== undefined && (!timestamp(operation.expiresAt) || operation.expiresAt <= now)) throw Error('Invalid preset expiry');
       const rules = await this.read(directory, true);
@@ -70,7 +71,7 @@ export class ApprovalPresets {
   }
   async matches(operation: PresetOperation): Promise<boolean> {
     try {
-      if (!canPresetApproval(operation)) return false;
+      if (!canPresetApproval(operation) || classify({ ...operation, cwd:operation.workspace }) === 'high') return false;
       const key = { ...operation, fingerprint: fingerprint(operation.tool, operation.command) };
       return (await this.list()).some(rule => same(rule, key));
     } catch { return false; }

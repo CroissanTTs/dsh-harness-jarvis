@@ -50,6 +50,14 @@ final class ApprovalClientTests: XCTestCase {
   }
 
   // MARK: - 等价类
+  func testSnapshotIncludesAutomaticApprovals() async throws {
+    ApprovalURLProtocol.response = (200, #"{"autoApprovals":[{"id":"a","session":"s","title":"run","tool":"shell","command":"git status","tier":"safe","at":1234}]}"#)
+    let snapshot = try await client.snapshot()
+    XCTAssertEqual(snapshot.autoApprovals.first?.command, "git status")
+    XCTAssertNil(snapshot.autoApprovals.first?.rule)
+    XCTAssertEqual(ApprovalURLProtocol.requests.first?.url?.path, "/jarvis/state")
+  }
+
   func testAlwaysAnswerUsesDecisionWireValueAndAuthentication() async throws {
     try await client.answer(.always(id: "pending-1"))
     let request = try XCTUnwrap(ApprovalURLProtocol.requests.first)

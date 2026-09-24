@@ -65,6 +65,10 @@ public enum HoverButton: Equatable, Sendable {
 @MainActor
 public final class PanelModel: ObservableObject {
   public static let maxVisiblePending = 3
+  public static let maxVisibleAutoApprovals = 5
+  @Published public private(set) var revokingAutoApproval: ApprovalRule.Identity?
+  @Published public private(set) var autoApprovalError: String?
+  private var revokedAutoApprovalIDs: Set<String> = []
 
   @Published public private(set) var snapshot: Snapshot?
   @Published public private(set) var connection: Connection = .connecting
@@ -154,6 +158,35 @@ public final class PanelModel: ObservableObject {
 
   public var visiblePending: [PendingItem] {
     Array((snapshot?.pending ?? []).prefix(Self.maxVisiblePending))
+  }
+
+  public var visibleAutoApprovals: [AutoApproval] {
+    var seen: Set<String> = []
+    return Array((snapshot?.autoApprovals ?? []).sorted { $0.at > $1.at }
+      .filter { seen.insert($0.id).inserted }.prefix(Self.maxVisibleAutoApprovals)).map { entry in
+        var entry = entry
+        if revokedAutoApprovalIDs.contains(entry.id) { entry.rule = nil }
+        return entry
+      }
+  }
+
+  /// Revoking the saved preset does not undo an operation that already ran.
+  public func revokeAutoApproval(_ entry: AutoApproval) async {
+    guard revokingAutoApproval == nil,
+          let rule = visibleAutoApprovals.first(where: { $0.id == entry.id })?.rule else { return }
+    revokingAutoApproval = rule
+    defer { revokingAutoApproval = nil }
+    do {
+      try await api.removeApprovalRule(rule)
+    } catch JarvisAPIError.http(404) {
+      // A different client already removed the same exact preset.
+    } catch {
+      autoApprovalError = "撤销规则失败：\(error.localizedDescription)"
+      return
+    }
+    revokedAutoApprovalIDs.formUnion((snapshot?.autoApprovals ?? []).filter { $0.rule == rule }.map(\.id))
+    autoApprovalError = nil
+    await refresh()
   }
 
   public var hiddenPendingCount: Int {

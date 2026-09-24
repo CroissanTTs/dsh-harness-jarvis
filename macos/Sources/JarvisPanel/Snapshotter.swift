@@ -54,6 +54,7 @@ final class Snapshotter {
       Scene(name: "17-caption-session", demo: 6, origin: lower, quick: true, history: true),
       Scene(name: "18-targets-task-state", demo: 7, origin: lower, quick: true, targets: true),
       Scene(name: "19-approval-presets", demo: 8, origin: upper, quick: true),
+      Scene(name: "20-auto-approvals", demo: 9, origin: upper, hover: true),
     ]
     let (orb, _, model) = controller.snapshotParts
     for scene in scenes {

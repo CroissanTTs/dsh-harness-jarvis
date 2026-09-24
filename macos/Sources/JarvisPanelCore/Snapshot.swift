@@ -199,10 +199,11 @@ public struct Snapshot: Decodable, Sendable, Equatable {
   public var counts: Counts
   public var sessions: [SessionInfo]
   public var pending: [PendingItem]
+  public var autoApprovals: [AutoApproval]
 
   public init(agentId: String = "", activity: Activity = .idle, error: String? = nil,
               voice: VoiceState = VoiceState(), counts: Counts = Counts(),
-              sessions: [SessionInfo] = [], pending: [PendingItem] = []) {
+              sessions: [SessionInfo] = [], pending: [PendingItem] = [], autoApprovals: [AutoApproval] = []) {
     self.agentId = agentId
     self.activity = activity
     self.error = error
@@ -210,6 +211,7 @@ public struct Snapshot: Decodable, Sendable, Equatable {
     self.counts = counts
     self.sessions = sessions
     self.pending = pending
+    self.autoApprovals = autoApprovals
   }
 
   public init(from decoder: Decoder) throws {
@@ -218,6 +220,7 @@ public struct Snapshot: Decodable, Sendable, Equatable {
     error = try c.decodeIfPresent(String.self, forKey: .error)
     counts = try c.decodeIfPresent(Counts.self, forKey: .counts) ?? Counts()
     pending = try c.decodeIfPresent([PendingItem].self, forKey: .pending) ?? []
+    autoApprovals = ((try? c.decode([LenientAutoApproval].self, forKey: .autoApprovals)) ?? []).compactMap(\.value)
 
     let legacySpeaking = try c.decodeIfPresent(Bool.self, forKey: .speaking) ?? false
     voice = try c.decodeIfPresent(VoiceState.self, forKey: .voice) ?? VoiceState(speaking: legacySpeaking)
@@ -236,7 +239,7 @@ public struct Snapshot: Decodable, Sendable, Equatable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case agentId, activity, error, voice, counts, sessions, pending, managed, speaking
+    case agentId, activity, error, voice, counts, sessions, pending, managed, speaking, autoApprovals
   }
 }
 

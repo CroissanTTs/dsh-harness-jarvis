@@ -79,6 +79,14 @@ struct HoverLayerView: View {
               .transition(emerge(at: local, index: i))
           }
         }
+        if state.showHover, !model.visibleAutoApprovals.isEmpty {
+          let frame = state.local(state.autoApprovalsFrame)
+          AutoApprovalsView(model: model)
+            .frame(width: frame.width, height: frame.height)
+            .hitArea()
+            .position(x: frame.midX, y: frame.midY)
+            .transition(.opacity)
+        }
         if state.showHover {
           readout(layout.readout, rows: Readout.rows(snapshot: model.snapshot, connection: model.connection),
                   side: layout.side)

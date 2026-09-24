@@ -3,7 +3,7 @@ import Foundation
 
 /// The plugin owns rule identity and expiry. Never derive these from display text.
 public struct ApprovalRule: Decodable, Sendable, Equatable, Identifiable {
-  public struct Identity: Hashable, Sendable {
+  public struct Identity: Decodable, Hashable, Sendable {
     public let fingerprint: String
     public let tool: String
     public let workspace: String

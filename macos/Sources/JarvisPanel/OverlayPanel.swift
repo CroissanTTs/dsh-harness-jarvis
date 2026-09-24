@@ -80,6 +80,7 @@ final class OverlayState: ObservableObject {
   @Published var showTargets = false
   @Published var focusToken = 0
   @Published var captionFrame: CGRect = .zero
+  @Published var autoApprovalsFrame: CGRect = .zero
   @Published var reduceCaptionMotion = false
   @Published var toast: String?
   /// Interactive rects in overlay-local SwiftUI coordinates (y down).

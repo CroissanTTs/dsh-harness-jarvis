@@ -42,6 +42,10 @@ import { remember, recall, type RememberArgs, type RecallArgs } from './memory/t
 import { writeApproval } from './approval-store.ts';
 import { ApprovalPresets, validRuleKey, type ApprovalRuleKey } from './approval-presets.ts';
 import { canPresetApproval, type PresetOperation } from './approval-risk.ts';
+import { classify, type ApprovalOperation } from './approval-tier.ts';
+import { AutoApproval, type AutoApprovalResult } from './auto-approval.ts';
+import { AutoApprovalState } from './auto-approval-state.ts';
+import { readApprovalHistory } from './approval-history.ts';
 import { CompletionJudge } from './completion.ts';
 import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
@@ -148,6 +152,7 @@ export const Config = z.object({
   archiveIdleDays: z.number().default(7),
   judgeEnabled: z.boolean().default(true),
   askInterception: z.boolean().default(false),
+  autoApprove: z.union(['off', 'safe', 'safe+grey']).default('off'),
   judgeProvider: z.string().default(''),
   judgeModel: z.string().default(''),
   judgeTimeoutMs: z.number().default(20_000),
@@ -169,6 +174,7 @@ export const SettingsSchema = z.object({
   edgeVoice: Config.dict!.edgeVoice.description('内置语音音色（voice-mini 不可用时）；下一次播报生效。'),
   greetings: Config.dict!.greetings.description('附加欢迎语；重启欢迎时随机选用。'),
   askInterception: Config.dict!.askInterception.description('允许贾维斯代答托管会话的低风险选择题；默认关闭，不确定时仍交给你。'),
+  autoApprove: Config.dict!.autoApprove.description('自动审批：off 关闭，safe 仅只读白名单，safe+grey 启用灰色模型判断及中危预设/历史依据；高危始终交给你。下一次请求生效。'),
   judgeEnabled: Config.dict!.judgeEnabled.description('启用任务完成判断；下一次判断生效。'),
   judgeProvider: Config.dict!.judgeProvider.description('判断模型提供方；留空使用当前贾维斯提供方。'),
   judgeModel: Config.dict!.judgeModel.description('判断模型；留空使用当前贾维斯模型。'),
@@ -193,6 +199,7 @@ interface JarvisConfig {
   archiveIdleDays: number;
   judgeEnabled: boolean;
   askInterception: boolean;
+  autoApprove: 'off' | 'safe' | 'safe+grey';
   judgeProvider: string;
   judgeModel: string;
   judgeTimeoutMs: number;
@@ -230,7 +237,7 @@ const COMMANDER_PERSONA = [
   '- 要对用户说话用 say_to_user;需要用户拍板时用 ask_user,拿到回答再继续。',
   '- 收到以 [会话 … 判断未满足] 开头的通知时，按通知要求用 ask_user 询问并传入 session 和 task，不要自己决定续做。用户选继续才用 inject_to_session 发送具体续做指令；选不用了就结束。回答已失效时不要再发送旧续做指令。',
   '- 审批你只 relay 用户决定,不自作主张批准。',
-  '- 用户要查看或撤销审批预设时，用 list_approval_rules / remove_approval_rule；删除时原样传回 fingerprint、tool、workspace。只有用户在审批卡片点总是允许才能创建预设，预设目前不触发自动审批。',
+  '- 用户要查看或撤销审批预设时，用 list_approval_rules / remove_approval_rule；删除时原样传回 fingerprint、tool、workspace。只有用户在审批卡片点总是允许才能创建预设；是否自动审批由用户设置决定，你不能自行扩大授权。',
   "- 用户说'记住…'就用 remember；需要回忆过去的约定或决定时先 recall。",
   '- 一两句话,别读代码/路径/markdown 出来。',
 ].join('\n');
@@ -241,6 +248,7 @@ interface JarvisDeps {
   ledger: TaskLedger;
   memory: MemoryStore;
   presets: ApprovalPresets;
+  removeApprovalRule: (key: ApprovalRuleKey) => Promise<boolean>;
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
@@ -438,6 +446,17 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   });
   const live = new LiveState(entry.jarvisSessionId);
   const presets = new ApprovalPresets(memory);
+  const autoApprovals = new AutoApprovalState();
+  const removeApprovalRule = async (key: ApprovalRuleKey): Promise<boolean> => {
+    const removed = await presets.remove(key);
+    autoApprovals.revoke(key); live.touch();
+    return removed;
+  };
+  const autoApproval = new AutoApproval({
+    config: () => entry, classify, llm: () => llm,
+    preset: operation => presets.matches({ ...operation, workspace: operation.cwd }),
+    history: operation => readApprovalHistory(memory, operation),
+  });
 
   /** Every visible worker (not Jarvis, not archived), flagged by whether it is handed to Jarvis. */
   const sessionRows = async (): Promise<SessionRow[]> => {
@@ -471,6 +490,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     ledger,
     memory,
     presets,
+    removeApprovalRule,
     sessionRows,
     setManaged,
     say: (text) => speakAsJarvis(builtInTts, entry, text, live),
@@ -607,6 +627,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
               },
               sessions,
               pending,
+              autoApprovals: autoApprovals.list(),
             });
             return;
           }
@@ -636,7 +657,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           if (url === '/approval-rules/remove' && req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}');
             if (!validRuleKey(body)) { sendJson(res, 400, { error: 'invalid rule key' }); return; }
-            if (!await presets.remove(body)) { sendJson(res, 404, { error: 'rule not found' }); return; }
+            if (!await removeApprovalRule(body)) { sendJson(res, 404, { error: 'rule not found' }); return; }
             res.statusCode = 204; res.end(); return;
           }
           if (url === '/voice' && req.method === 'POST') {
@@ -935,28 +956,51 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     let metadataError: unknown;
     let command: string | undefined;
     let presetOperation: PresetOperation | undefined;
+    let operation: ApprovalOperation | undefined;
+    let taskContext = '';
+    let userMessageSnapshot = '';
+    let taskId: string | undefined;
     try {
       // Freeze request metadata before DSH resumes and starts mutating the session.
       const sid = String(req.agent.id);
       const messages: any[] = req.agent?.session?.deriveMessages?.() ?? [];
-      const operation = approvalOperation(messages, req.callId);
-      command = operation.command;
+      const rawOperation = approvalOperation(messages, req.callId);
+      command = rawOperation.command;
       const lastUser = [...messages].reverse().find(message => message?.role === 'user');
-      const context = ledger.peekCurrent(sid)?.request ?? (lastUser?.content ?? [])
+      userMessageSnapshot = JSON.stringify(lastUser ?? null);
+      const task = ledger.peekCurrent(sid);
+      taskId = task?.id;
+      const context = task?.request ?? (lastUser?.content ?? [])
         .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
         .map((block: any) => block.text).join('\n');
       const cwd = (ctx as any).get?.('sessions')?.get?.(sid)?.header?.cwd;
-      presetOperation = { tool: req.toolName, command, args: operation.args, workspace: typeof cwd === 'string' ? cwd : '' };
+      taskContext = context;
+      operation = { tool: req.toolName, command, args: rawOperation.args, cwd: typeof cwd === 'string' ? cwd : '' };
+      presetOperation = { ...operation, workspace: operation.cwd };
       snapshot = {
         fingerprint: fingerprint(req.toolName, command),
         session: { id: sid, cwd: typeof cwd === 'string' ? cwd : '', managed: managed.has(sid) },
-        operation: { tool: req.toolName, ...operation },
+        operation: { tool: req.toolName, ...rawOperation },
         context: Array.from(context).slice(0, 300).join(''),
         tier: { value: '', notes: 'Phase1:未分级' },
       };
     } catch (error) { metadataError = error; }
-    return live.holdApproval(req, next, command?.slice(0, 300), {
-      canAlwaysAllow: () => !!presetOperation && canPresetApproval(presetOperation),
+    const current = (): boolean => {
+      if (settingsDisposed || req.signal?.aborted || !operation || String(req.agent.id) !== snapshot?.session.id) return false;
+      const messages: any[] = req.agent?.session?.deriveMessages?.() ?? [];
+      const latest = approvalOperation(messages, req.callId);
+      const latestTask = ledger.peekCurrent(String(req.agent.id));
+      const lastUser = [...messages].reverse().find(message => message?.role === 'user');
+      const latestContext = latestTask?.request ?? (lastUser?.content ?? [])
+        .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block: any) => block.text).join('\n');
+      const cwd = (ctx as any).get?.('sessions')?.get?.(String(req.agent.id))?.header?.cwd;
+      return req.toolName === operation.tool && latest.command === operation.command && latest.args === operation.args &&
+        cwd === operation.cwd && latestTask?.id === taskId && latestContext === taskContext &&
+        JSON.stringify(lastUser ?? null) === userMessageSnapshot;
+    };
+    const relay = (note = '') => live.holdApproval(req, next, command?.slice(0, 300), {
+      canAlwaysAllow: () => !!presetOperation && !!operation && classify(operation) !== 'high' && canPresetApproval(presetOperation),
       onAlways: () => {
         const operation = presetOperation;
         if (!operation) return;
@@ -967,7 +1011,18 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
           });
         });
       },
-    }).then(outcome => {
+    }, note);
+    const mode = entry.autoApprove;
+    const decision = snapshot && operation ? autoApproval.decide({ operation, context: taskContext, signal: req.signal, current })
+      : Promise.resolve<AutoApprovalResult>({allow:false,tier:'high',reason:''});
+    const settled = mode === 'off'
+      ? relay().then(outcome => ({ result: {allow:false,tier:'grey',reason:''} as AutoApprovalResult, automatic:false, outcome }))
+      : decision.then(async result => {
+      let valid = false;
+      try { valid = result.allow && entry.autoApprove === mode && current() && classify(operation!) === result.tier; } catch {}
+      return { result, automatic: valid, outcome: valid ? 'allowed-once' : await relay(result.reason) };
+    });
+    return settled.then(({ outcome, result, automatic }) => {
       if (outcome !== 'allowed-once' && outcome !== 'rejected') return outcome;
       const ts = new Date().toISOString();
       // A microtask would run before the DSH waterfall returns to its caller.
@@ -977,8 +1032,18 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         try {
           if (!snapshot) { onError(metadataError); return; }
           void writeApproval(memory, {
-            ...snapshot, ts, decision: { allow: outcome === 'allowed-once', source: 'user', reason: '' },
+            ...snapshot, ts, ...(mode === 'off' ? {} : {tier:{value:result.tier,notes:automatic?'自动批准':'转用户审批'}}),
+            decision: { allow: outcome === 'allowed-once', source: automatic ? 'jarvis' : 'user', reason: automatic ? result.reason : '' },
           }, onError);
+          if (automatic && result.tier !== 'high') {
+            const title = titleCache.map[snapshot.session.id] || snapshot.session.id;
+            autoApprovals.add({ session:snapshot.session.id,title,tool:snapshot.operation.tool,command:snapshot.operation.command,
+              tier:result.tier,...(result.rule?{rule:result.rule}:{}) });
+            live.touch();
+            if (result.tier === 'grey' && !settingsDisposed) {
+              void deps.say(`替 ${title} 批准了 ${Array.from(snapshot.operation.command).slice(0,80).join('')}`).catch(onError);
+            }
+          }
         } catch (error) { try { onError(error); } catch {} }
       });
       return outcome;
@@ -1029,6 +1094,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     clearTimeout(pruneAudio);
     completion.dispose();
     askInterceptor.dispose();
+    autoApproval.dispose();
     output.dispose();
     panel.dispose();
     if (panelOwner === panel) panelOwner = null;
@@ -1314,7 +1380,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
 
   tools.register(defineTool({
     name: 'list_approval_rules',
-    description: '列出用户在审批卡片创建的未过期工作区预设。返回 fingerprint、tool、workspace 供精确删除；预设目前不触发自动审批。',
+    description: '列出用户在审批卡片创建的未过期工作区预设。返回 fingerprint、tool、workspace 供精确删除；只有用户启用对应自动审批设置才会使用预设。',
     parameters: {}, output: textOutput, isConcurrencySafe: () => true,
     async execute() { return text(JSON.stringify(await deps.presets.list(), null, 2)); },
   } as never));
@@ -1324,7 +1390,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
     parameters: { fingerprint: { type: 'string' as const, required: true },
       tool: { type: 'string' as const, required: true }, workspace: { type: 'string' as const, required: true } },
     output: textOutput, isConcurrencySafe: () => true,
-    async execute(args: ApprovalRuleKey) { return text(await deps.presets.remove(args) ? '已删除审批预设' : '未找到审批预设'); },
+    async execute(args: ApprovalRuleKey) { return text(await deps.removeApprovalRule(args) ? '已删除审批预设' : '未找到审批预设'); },
   } as never));
 
   tools.register(defineTool({

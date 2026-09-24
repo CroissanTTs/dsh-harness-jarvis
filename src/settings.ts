@@ -6,6 +6,7 @@ export interface JarvisSettings {
   greetings: string[];
   judgeEnabled: boolean;
   askInterception: boolean;
+  autoApprove: 'off' | 'safe' | 'safe+grey';
   judgeProvider: string;
   judgeModel: string;
   judgeTimeoutMs: number;
@@ -32,6 +33,7 @@ export function mergeSettings(base: JarvisSettings, source: unknown): JarvisSett
     greetings: greetings.map(value => value.trim()).filter(Boolean),
     judgeEnabled: typeof raw.judgeEnabled === 'boolean' ? raw.judgeEnabled : base.judgeEnabled,
     askInterception: typeof raw.askInterception === 'boolean' ? raw.askInterception : base.askInterception,
+    autoApprove: ['off', 'safe', 'safe+grey'].includes(raw.autoApprove as string) ? raw.autoApprove as JarvisSettings['autoApprove'] : base.autoApprove,
     judgeProvider: text('judgeProvider', true), judgeModel: text('judgeModel', true),
     judgeTimeoutMs: integer('judgeTimeoutMs', SETTINGS_LIMITS.minTimeout, SETTINGS_LIMITS.maxTimeout),
     maxContinueRounds: integer('maxContinueRounds', 0, SETTINGS_LIMITS.maxRounds),

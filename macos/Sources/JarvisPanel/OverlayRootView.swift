@@ -17,7 +17,8 @@ struct OverlayRootView: View {
         column(q)
           .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: q.side == .right ? .leading : .trailing)))
       }
-      if !model.quickBarOpen, model.caption != nil {
+      if !model.quickBarOpen, model.caption != nil,
+         !(state.showHover && !model.visibleAutoApprovals.isEmpty) {
         let rect = state.local(state.captionFrame)
         caption
           .frame(width: rect.width)

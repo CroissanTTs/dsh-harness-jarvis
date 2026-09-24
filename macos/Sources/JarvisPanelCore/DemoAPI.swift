@@ -19,12 +19,15 @@ public actor DemoAPI: JarvisAPI {
   }
 
   private enum Scene: Int, CaseIterable {
-    case idle, awaiting, thinking, speaking, attention, failed, narrating, taskStates, approvalPreset
+    case idle, awaiting, thinking, speaking, attention, failed, narrating, taskStates, approvalPreset, autoApprovals
   }
 
-  /// Freezes the demo on one scene (0 idle … 8 approval presets, wrapping); nil resumes the clock.
+  /// Freezes the demo on one scene (0 idle … 9 automatic approvals, wrapping); nil resumes the clock.
   public func setScene(_ index: Int?) {
     pinned = index
+    if index == 9, !savedRules.contains(where: { $0.identity == demoAutoRule.identity }) {
+      savedRules.append(demoAutoRule)
+    }
   }
 
   private func scene(at now: Date) -> (Scene, cycle: Int) {
@@ -49,6 +52,18 @@ public actor DemoAPI: JarvisAPI {
     PendingItem(id: "demo-p2", kind: .question, session: "demo-anvil", title: "数据库迁移用哪个方案？",
                 choices: ["保留旧表", "直接替换"]),
   ]
+
+  private let demoAutoRule = ApprovalRule(fingerprint: "shell:npm-install", tool: "shell", workspace: "/Users/demo/hammer", createdAt: 1000)
+  private var autoApprovalEntries: [AutoApproval] {
+    let rule = savedRules.contains(where: { $0.identity == demoAutoRule.identity }) ? demoAutoRule.identity : nil
+    return [
+      AutoApproval(id: "auto-5", session: "demo-hammer", title: "安装工作区依赖", tool: "shell", command: "npm install", tier: .medium, at: 5000, rule: rule),
+      AutoApproval(id: "auto-4", session: "demo-hammer", title: "检查改动", tool: "shell", command: "git diff --stat", tier: .safe, at: 4000),
+      AutoApproval(id: "auto-3", session: "demo-anvil", title: "运行项目测试", tool: "shell", command: "npm test", tier: .grey, at: 3000),
+      AutoApproval(id: "auto-2", session: "demo-docs", title: "查看配置", tool: "read", command: "package.json", tier: .safe, at: 2000),
+      AutoApproval(id: "auto-1", session: "demo-hammer", title: "创建工作区文件", tool: "shell", command: "touch build.txt", tier: .medium, at: 1000),
+    ]
+  }
 
   private let presetPending = PendingItem(id: "demo-p3", kind: .approval, session: "demo-hammer",
     title: "请求执行", detail: "swift test --package-path macos", note: "只允许此工具和工作区中的相同请求。", canAlwaysAllow: true)
@@ -101,7 +116,8 @@ public actor DemoAPI: JarvisAPI {
       counts: Counts(running: scene == .failed ? 1 : 2, pending: pending.count,
                      unread: read ? 0 : 1, failed: scene == .failed ? 1 : 0),
       sessions: list,
-      pending: pending
+      pending: pending,
+      autoApprovals: scene == .autoApprovals ? autoApprovalEntries : []
     )
   }
 

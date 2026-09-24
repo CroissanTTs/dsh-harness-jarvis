@@ -207,6 +207,12 @@ final class AppController: NSObject {
     let stackBottom = quick.growsUp ? quick.bar.minY : quick.bar.minY - quick.stackLimit
     area = area.union(CGRect(x: quick.bar.minX, y: stackBottom, width: quick.bar.width, height: stackTop - stackBottom))
     area = area.union(captionFrame)
+    if !model.visibleAutoApprovals.isEmpty {
+      let auditFrame = Placement.autoApprovals(center: center, visible: visible, hover: hover,
+                                               count: model.visibleAutoApprovals.count)
+      if overlayState.autoApprovalsFrame != auditFrame { overlayState.autoApprovalsFrame = auditFrame }
+      area = area.union(auditFrame)
+    }
     area = area.insetBy(dx: -16, dy: -16).integral
 
     if overlayState.frame != area {

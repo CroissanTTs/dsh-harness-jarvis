@@ -10,7 +10,7 @@ describe('等价类', () => {
     const merged = mergeSettings(defaults, { provider: ' custom ', model: ' test ', edgeVoice: ' voice ', greetings,
       judgeEnabled: false, judgeProvider: ' other ', judgeModel: ' judge ', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
     assert.deepEqual(merged, { provider: 'custom', model: 'test', edgeVoice: 'voice', greetings: ['你好。', '欢迎。'],
-      judgeEnabled: false, askInterception: false, judgeProvider: 'other', judgeModel: 'judge', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
+      judgeEnabled: false, askInterception: false, autoApprove: 'off', judgeProvider: 'other', judgeModel: 'judge', judgeTimeoutMs: 30000, maxContinueRounds: 4 });
     assert.notEqual(merged.greetings, greetings);
     assert.equal(defaults.judgeEnabled, true);
   });

@@ -3,6 +3,22 @@ import XCTest
 
 final class DemoAPITests: XCTestCase {
   // MARK: - 等价类
+  func testAutoApprovalSceneIncludesAllTiersAndRevocableRule() async throws {
+    let api = DemoAPI()
+    await api.setScene(9)
+    let snapshot = try await api.snapshot()
+    XCTAssertEqual(snapshot.autoApprovals.count, 5)
+    XCTAssertEqual(snapshot.autoApprovals.map(\.command), ["npm install", "git diff --stat", "npm test", "package.json", "touch build.txt"])
+    XCTAssertEqual(snapshot.autoApprovals.map(\.tier), [.medium, .safe, .grey, .safe, .medium])
+    let rule = try XCTUnwrap(snapshot.autoApprovals.first(where: { $0.rule != nil })?.rule)
+    XCTAssertEqual(rule.fingerprint, "shell:npm-install")
+    XCTAssertEqual(rule.tool, "shell")
+    try await api.removeApprovalRule(rule)
+    let refreshed = try await api.snapshot()
+    XCTAssertEqual(refreshed.autoApprovals.count, 5)
+    XCTAssertTrue(refreshed.autoApprovals.allSatisfy { $0.rule == nil })
+  }
+
   func testPresetSceneCanSaveAndDeleteRule() async throws {
     let api = DemoAPI()
     await api.setScene(8)
@@ -52,7 +68,7 @@ final class DemoAPITests: XCTestCase {
 
   func testOutOfRangeSceneWraps() async throws {
     let api = DemoAPI()
-    await api.setScene(20)
+    await api.setScene(22)
     let s = try await api.snapshot()
     XCTAssertEqual(s.activity, .thinking)
   }

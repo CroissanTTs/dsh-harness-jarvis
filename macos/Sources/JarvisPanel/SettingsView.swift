@@ -104,7 +104,7 @@ struct SettingsView: View {
   private var approvalRulesSection: some View {
     Section("审批规则") {
       HStack {
-        Text("预设仅限对应工作区；当前仍逐次审批。")
+        Text("预设仅限对应工作区，是否自动批准取决于自动审批设置。")
           .font(.caption).foregroundStyle(.secondary)
         Spacer()
         Button("刷新") { Task { await approvalRules.refresh() } }

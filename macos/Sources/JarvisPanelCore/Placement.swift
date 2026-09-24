@@ -233,6 +233,25 @@ public enum Placement {
     return HoverLayout(side: side, buttons: buttons, readout: readout, badge: badge)
   }
 
+  /// Audit card opens beyond the hover controls, leaving playback buttons accessible.
+  public static func autoApprovals(center: CGPoint, visible: CGRect, hover: HoverLayout, count: Int) -> CGRect {
+    var occupied = CGRect(x: center.x - orbRadius, y: center.y - orbRadius, width: orbRadius * 2, height: orbRadius * 2)
+    for button in hover.buttons {
+      occupied = occupied.union(CGRect(x: button.x - buttonSize / 2, y: button.y - buttonSize / 2,
+                                      width: buttonSize, height: buttonSize))
+    }
+    switch hover.readout {
+    case .list(let rect), .capsule(let rect): occupied = occupied.union(rect)
+    case .none: break
+    }
+    let width = min(320, max(0, visible.width - screenMargin * 2))
+    let height = min(CGFloat(88 + min(5, max(0, count)) * 60), max(0, visible.height - screenMargin * 2))
+    let x = hover.side == .left ? occupied.minX - width - 12 : occupied.maxX + 12
+    return CGRect(x: min(max(x, visible.minX + screenMargin), visible.maxX - width - screenMargin),
+                  y: min(max(center.y - height / 2, visible.minY + screenMargin), visible.maxY - height - screenMargin),
+                  width: width, height: height)
+  }
+
   public static func quickBar(center: CGPoint, visible: CGRect, barSize: CGSize) -> QuickBarLayout {
     let side = interiorSide(center: center, visible: visible)
     let x = side == .left ? center.x - orbRadius - barGap - barSize.width : center.x + orbRadius + barGap

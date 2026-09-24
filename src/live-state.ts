@@ -263,7 +263,7 @@ export class LiveState {
   // ── held requests ─────────────────────────────────────────────────────
 
   holdApproval(req: ApprovalRequestLike, next: () => Promise<ApprovalOutcome>, command?: string,
-    preset?: ApprovalPresetPolicy): Promise<ApprovalOutcome> {
+    preset?: ApprovalPresetPolicy, note?: string): Promise<ApprovalOutcome> {
     const id = randomUUID();
     const original = req.signal;
     const downstream = new AbortController();
@@ -281,7 +281,7 @@ export class LiveState {
       const held: HeldApproval = {
         kind: 'approval', id, session: String(req.agent.id), at: this.now(), toolName: req.toolName,
         ...(command ? { command } : {}),
-        ...(req.reason ? { reason: req.reason } : {}),
+        ...((req.reason || note) ? { reason: [req.reason, note].filter(Boolean).join('\n') } : {}),
         preset,
         resolve: outcome => {
           if (settled) return;

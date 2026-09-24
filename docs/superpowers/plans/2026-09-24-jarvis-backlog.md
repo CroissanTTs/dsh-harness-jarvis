@@ -42,7 +42,7 @@
 |---|---|---|---|---|
 | W1 | 面板崩溃自动拉起 | — | 小 | 已完成（`w1-panel-supervisor-20260924`） |
 | O1 | 日志轮转与播报缓存清理（可并行） | — | 小 | 已完成（`o1-log-rotation-20260924`） |
-| T1 | 真实 DSH 冒烟检查脚本（可并行） | — | 小 | 待办 |
+| T1 | 真实 DSH 冒烟检查脚本（可并行） | — | 小 | 已完成（`t1-smoke-20260924`） |
 | Q1 | 真机验收清单（人工，由用户执行；本阶段后做第一轮） | — | 小 | 待办 |
 
 ### 阶段 4：记忆
@@ -124,7 +124,7 @@
 
 ### 2.3 构建、重启、提交
 
-- 插件：`npm run build`（tsc → `lib/`），**需要用户重启 DSH 才生效**，完成时要在汇报里提醒。
+- 插件：`npm run build`（tsc → `lib/`），**需要用户重启 DSH 才生效**，完成时要在汇报里提醒。重启 DSH 后运行 `npm run smoke`。
 - 面板：`cd macos && ./build.sh`，然后重启：
   ```
   pkill -x jarvis-panel; cd macos && perl -MPOSIX -e 'exit if fork; POSIX::setsid(); exit if fork; open STDIN,"</dev/null"; open STDOUT,">/dev/null"; open STDERR,">/dev/null"; exec "./jarvis-panel"'
@@ -612,7 +612,10 @@
 - **输出**：每项一行 ✓/✗ 加耗时；有失败时退出码非 0。连不上时提示"DSH 没运行或插件未加载"。
 - **测试**：把检查逻辑写成纯函数（输入响应对象，输出通过/失败原因），用预制响应做三段式测试；网络部分不测。
 - **文档**：在「2.3 构建、重启、提交」加一句"重启 DSH 后运行 `npm run smoke`"。
-- **实现记录**：（空）
+- **实现记录**（Codex T1 / 2026-09-24）：新增无依赖的 `scripts/smoke.mjs`、`npm run smoke` 和包内脚本分发，默认依次检查 state、wait、messages、未知会话 404、缺参数 400；每项输出固定名称、✓/✗及耗时，失败退出非零。只接受本机 HTTP origin，Bearer 与 rendererHeader 仅放请求头，禁止重定向，错误提示不拼接 token、响应内容、运行配置或异常原文。
+  - 接口适配：state 不提供 version，先以 `wait?since=-1&timeout=1` 取版本，再用该版本短轮询；源码的 timeout 单位为毫秒，两次 wait 均限制在 1.5 秒内。messages 实际为 `{messages:[…],count}`，校验其中数组及存在时的 count；兼容尚无贾维斯会话时的 `{messages:[],error:'no session'}`。正文“返回数组”按此实现，不改其他条目。
+  - 可选 `npm run smoke -- --write`：前置检查通过后重新读取可见会话，挑未托管者，纳入并确认，最后移出并确认；没有候选时明确跳过。请求发出前进入 finally 保护，添加响应丢失、状态确认异常、SIGINT/SIGTERM 均尝试恢复；恢复请求或确认失败会报错并退出非零，不宣称恢复成功。未对真实 DSH 执行写检查。
+  - 验证：`tests/smoke.test.ts` 新增 14 项等价类 / 边界值 / 异常路径测试，覆盖响应校验与注入内存请求的回滚控制流，不启动网络服务。`node --test tests/*.test.ts` 318/318、`cd macos && swift test` 222/222、`npm run build`、`macos/build.sh`、`git diff --check` 和 `npm pack --dry-run` 通过。主会话已在运行中的真实 DSH 上执行 `npm run smoke`（默认只读模式）：runtime、state、wait 获取版本/短轮询、messages、未知会话 404、缺参数 400 共 7 项全部通过，退出码 0，耗时依次为 0/19/1/3/2/2/7 ms；未打印 token，未执行真实 `--write`。这是当前宿主路由验证，W1/O1 的插件新逻辑仍需重启 DSH 生效；本条脚本本身无需重启，以后重启 DSH 后运行 `npm run smoke`。在已合入 W1/O1 的最新 main 上 rebase 后复验通过，仅合并清单相邻状态行冲突，保留三项记录。标签 `t1-smoke-20260924` 定位单个实现提交。
 
 ## 10. 条目详情：发布
 

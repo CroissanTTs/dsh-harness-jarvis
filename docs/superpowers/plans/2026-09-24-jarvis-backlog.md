@@ -51,7 +51,7 @@
 |---|---|---|---|---|
 | M1 | 记忆存储底座：目录布局 + 按 store 读写锁 | — | 中 | 已完成（`m1-memory-store-20260924`） |
 | M2 | `remember` / `recall` 工具 | M1 | 中 | 已完成（`m2-remember-recall-20260924`） |
-| M3 | 自动抓取 temp（pass A）（与 M2 可并行） | M1 | 中 | 待办 |
+| M3 | 自动抓取 temp（pass A）（与 M2 可并行） | M1 | 中 | 已完成（`m3-temp-capture-20260924`） |
 | M6 | 长期记忆注入贾维斯人设（L1 section） | M2 | 小 | 待办 |
 
 ### 阶段 5：面板体验
@@ -370,7 +370,10 @@
   - `turn/end`：reason.kind。
 - 写入走 `store.appendTemp`，异步、失败只记日志；单个会话单日文件超过 2 MB 停止追加并记一条 `truncated`。
 - **测试**：事件到记录的映射（纯函数 `toTempRecord(event)`）三段式；超限截断边界；未知事件类型返回 null。
-- **实现记录**：（空）
+- **实现记录**（Codex M3 / 2026-09-24）：确认 M1 已在 main，从最新 main 建 `codex/m3-temp-capture` 独立 worktree。新增 `src/memory/capture.ts` 的纯白名单映射与容错抓取；`src/index.ts` 仅对当前托管会话及配置的贾维斯自身异步调用，不等待写盘，失败只写 debug。user 顶层文本合并后截500码点、assistant 只取最后一个文本块前800码点（跳过 interrupted 前缀），tool 只记工具名/isError，turn/end 只记 reason.kind；不拷贝原事件、工具参数/输出、推理、stream、附件或其他元数据。同步 SPEC 与存储接口文档。
+  - 宿主适配决定：at 使用 SessionEvent.time，session 由 appendTemp 补入。实际 tool/result 没有工具名，使用 source.callId 和 toolCallId 校验后，在同轮已提交事件里查 tool/call.name；TOOL_NOT_STARTED 可无 tool/call，此时从 assistant/message 匹配 tool-call 块仅取 id/name，绝不读取 arguments/text/reasoning。纯映射可选 toolName 参数只接受该适配结果；无匹配、未知/非法事件或空文本跳过。移出托管后只停止新事件，已接受的异步写继续完成；不往 DSH 会话日志写自定义事件。
+  - 容量决定：`MemoryStore.appendTemp` 同一会话写锁内检查 UTF-8 JSONL 字节数，2 MB 按 **2 MiB（2,097,152字节）**；预计追加后恰好等于上限允许，超过则改写单个 `{session,at,type:'truncated'}`，该标记允许少量越界。当日标记后不再追加，从文件尾识别标记以跨实例/重启去重；残缺尾行先补换行，UTC 次日与其他会话独立恢复。此方案比“先追加到超过上限”更严格，避免超大单条突破限制；原已超限文件保留原内容并只补标记。
+  - 新增 **31 项**三段式测试，覆盖真实事件结构与工具名关联、禁止字段 getter、500/800 Unicode 边界、真实 apply 过滤/托管变更/异步容错、容量±1字节、并发竞争、单次截断及失败恢复。插件 **405/405**、面板 **222/222**、`npm run build`、`macos/build.sh`、`git diff --check` 全通过，独立审查含 TOOL_NOT_STARTED 路径复验无阻断。标签 `m3-temp-capture-20260924` 定位单个实现提交；合回 main 后主目录重建插件，需用户重启 DSH 并运行 `npm run smoke`。面板代码未改，无需单独重启；人工可在托管会话完成一轮带工具操作，核对 temp 对应日文件仅含上述摘要字段，未托管会话不生成记录。
 
 ### M4 处置分类器（pass B）
 

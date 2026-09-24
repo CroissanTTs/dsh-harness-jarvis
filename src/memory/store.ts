@@ -8,6 +8,8 @@ import { atomicWrite, writeJournal, type WriteJournal } from './journal.ts';
 import { storeLock } from './lock.ts';
 export { renderMemory, parseMemory, type LongEntry } from './format.ts';
 
+export const TEMP_MAX_BYTES = 2 * 1024 * 1024;
+
 export type MemoryScope = 'general' | 'approvals' | string;
 export interface TempInput { at: number; type: string; [key: string]: unknown }
 export interface TempRecord extends TempInput { session: string }
@@ -143,10 +145,18 @@ export class MemoryStore {
       const handle = await open(path, 'a+', 0o600);
       try {
         const { size } = await handle.stat();
-        const tail = Buffer.alloc(1);
-        if (size) await handle.read(tail, 0, 1, size - 1);
-        // A crashed append must not swallow the next valid record into its partial line.
-        await handle.writeFile((size && tail[0] !== 10 ? '\n' : '') + line, 'utf8');
+        const marker = JSON.stringify({ session, at: value.at, type: 'truncated' }) + '\n';
+        // The last marker survives restart; inspect enough tail bytes even for long raw session ids.
+        const tail = Buffer.alloc(Math.min(size, Math.max(4096, Buffer.byteLength(marker) + 64)));
+        if (size) await handle.read(tail, 0, tail.length, size - tail.length);
+        try {
+          const last = JSON.parse(tail.toString('utf8').trimEnd().split('\n').at(-1) ?? '');
+          if (last?.type === 'truncated' && last.session === session) return;
+        } catch { /* A damaged tail is separated from the next valid record below. */ }
+        const separator = size && tail[tail.length - 1] !== 10 ? '\n' : '';
+        const next = size + Buffer.byteLength(separator + line) > TEMP_MAX_BYTES ? marker : line;
+        // Capacity check, marker deduplication and append share this session's write lock.
+        await handle.writeFile(separator + next, 'utf8');
       } finally { await handle.close(); }
     });
   }

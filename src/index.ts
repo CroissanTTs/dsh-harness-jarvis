@@ -7,8 +7,8 @@
  * workers keep their own prompts and transcripts. Continuation waits for the
  * user's answer after turn/end, then Jarvis delivers a new UserMessage.
  *
- * Explicit memory tools use scoped stores; automatic capture, settings UI and
- * automatic question answering remain backlog work.
+ * Explicit memory tools and filtered temp capture use scoped stores; settings UI
+ * and automatic question answering remain backlog work.
  * Pure logic lives in sibling modules so it can be tested without DSH.
  *
  * @module dsh-harness-jarvis
@@ -33,6 +33,7 @@ import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { approvalOperation, fingerprint, type ApprovalRecord } from './approvals.ts';
 import { MemoryStore } from './memory/store.ts';
+import { captureTemp, type CaptureSession } from './memory/capture.ts';
 import { remember, recall, type RememberArgs, type RecallArgs } from './memory/tools.ts';
 import { writeApproval } from './approval-store.ts';
 import { CompletionJudge } from './completion.ts';
@@ -833,6 +834,10 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // ── 挂点1: global listeners (worker events, filtered to managed) ──────
   ctx.on('session/event' as any, (session: { id?: string } | undefined, event: { type?: string; data?: any }) => {
     const sid = typeof session?.id === 'string' ? session.id : undefined;
+    if (sid && (sid === entry.jarvisSessionId || managed.has(sid))) {
+      void captureTemp(memory, session as CaptureSession, event, error =>
+        debug(entry, 'temp capture failed: ' + (error instanceof Error ? error.message : String(error))));
+    }
     if (sid) {
       if (event?.type === 'turn/start') live.turnStarted(sid);
       else if (event?.type === 'turn/end') live.turnEnded(sid, event.data?.reason);

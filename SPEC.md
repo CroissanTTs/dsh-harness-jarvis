@@ -1,7 +1,7 @@
 # dsh-harness-jarvis — 设计 Spec
 
-> 状态：M2 显式记忆工具实现同步 · 2026-09-24
-> 已落地：J0/J1/J2/J3/J4/J5/U2/M1/M2；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具和审批记录已落地，自动抓取与注入仍是后续设计；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
+> 状态：M3 自动 temp 抓取实现同步 · 2026-09-24
+> 已落地：J0/J1/J2/J3/J4/J5/U2/M1/M2/M3；实现进度以 [backlog](docs/superpowers/plans/2026-09-24-jarvis-backlog.md) 为准。§10 的存储底座、显式记忆工具、自动 temp 抓取和审批记录已落地，人设记忆注入仍是后续设计；DSH 设置页、自动答疑、字幕和语音输入尚未实现。
 > 单一真相源。MVP 砍 STT(悬浮窗文本输入窗口替代);权限面彻底干净(无 danger-full-access)。多对话核心:瘦编排+干净 worker+虚拟交错显示(§3.2);悬浮窗 dsh-notch 基(§12)。待研究:次要(见 §18)。
 
 ---
@@ -174,11 +174,11 @@ DSH / Cordis 加载插件 → apply()（全局）
 
 ## 10. 记忆(两级:temp JSONL + 长期 HTML)
 
-> 实现边界：存储底座（M1）、显式 remember/recall（M2）和 §10.1 审批记录（J3）已落地。自动抓取与人设记忆注入对应 backlog M3/M6；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
+> 实现边界：存储底座（M1）、显式 remember/recall（M2）、自动 temp 抓取（M3）和 §10.1 审批记录（J3）已落地。人设记忆注入对应 backlog M6；分类器与固化/清理 M4/M5 暂缓，L3 摘要 M7 条件触发，尚未运行。J2 判断直接读取台账与 worker 文本，不依赖记忆工具。
 
 - **临时记忆 temp**:`~/.dsh/jarvis/temp/<sessionId>/*.jsonl`,一行一事件(append-only,机器友好)。
 - **长期记忆**:`~/.dsh/jarvis/memory/{general,<sessionId>,approvals}/*.html`(语义标签,可 grep+read,人/agent 可读)。
-- **捕获(hybrid)**:插件自动抓 Jarvis/worker 的 `session/event`(assistant/message、tool 结果、turn 边界)写 temp(无感、不丢);Jarvis 显式 `remember` 写**长期**(curated 提升)。到长期两条路:① **固化**(auto,temp→长期)② **Remember**(显式)。
+- **捕获(hybrid)**：M3 只抓贾维斯自身和当前托管 worker 的 session/event：user 文本前500码点、assistant 最终文本块前800码点（跳过 interrupted 前缀）、工具名与是否出错、轮末 reason.kind；不记推理、工具参数、输出或 stream。按 event.time 的 UTC 日期异步写 temp，失败只记日志；同会话每日预计追加超过2 MiB时写一条 truncated 并停止当日追加，次日恢复。Jarvis 显式 `remember` 写**长期**；自动固化仍为后续设计。
 - **固化触发**(四选一):temp 达阈值 / 用户主动 / 阶段完成 / 定时。
 - **原则1 关键点 + 源指针**:记忆存关键点 + 源 session 指针;细节不进记忆(指回 worker transcript / 提示用户看 session)→ 多 worker 也不爆。
 - **原则2 最终结果优先压缩**:固化/摘要 model pass 时 weight final result,压过程/解释(agent 可靠性/鲁棒性等)。

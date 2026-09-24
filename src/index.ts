@@ -21,7 +21,7 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import { homedir } from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join, dirname } from 'node:path';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,7 @@ import { claimsTurnEnd } from './turn-end.ts';
 import { sessionRow, type SessionRow } from './session-state.ts';
 import { needsRename } from './title.ts';
 import { PanelSupervisor } from './panel-supervisor.ts';
+import { cleanupSpeechCache, RotatingLog } from './maintenance-files.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
 /** Package root (lib/ → parent). Resolves bundled scripts/synth-edge.mjs. */
@@ -179,11 +180,15 @@ function resolveDir(p: string): string {
 }
 
 /** File-based debug logging (bypasses ctx.logger which is invisible from CLI). */
+const debugLogs = new WeakMap<JarvisConfig, RotatingLog>();
 function debug(entry: JarvisConfig, msg: string): void {
   try {
-    const f = join(resolveDir(entry.audioDir), 'debug.log');
-    mkdirSync(dirname(f), { recursive: true, mode: 0o700 });
-    appendFileSync(f, `${new Date().toISOString()} ${msg}\n`, { flag: 'a' });
+    let log = debugLogs.get(entry);
+    if (!log) {
+      log = new RotatingLog(join(resolveDir(entry.audioDir), 'debug.log'));
+      debugLogs.set(entry, log);
+    }
+    log.write(`${new Date().toISOString()} ${msg}\n`);
   } catch { /* silent */ }
 }
 
@@ -387,6 +392,8 @@ function createPanelProcess(entry: JarvisConfig, say: JarvisDeps['say']): PanelP
 export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   const entry = { ...Config(rawConfig ?? {}), ...(rawConfig as object) } as JarvisConfig;
   debug(entry, 'apply() started');
+  const pruneAudio = setTimeout(() => cleanupSpeechCache(resolveDir(entry.audioDir)), 30_000);
+  pruneAudio.unref();
   const managed = new ManagedSet(resolveDir(entry.managedFile),
     (e) => debug(entry, 'managed.json write failed: ' + (e instanceof Error ? e.message : String(e))));
   const ledger = new TaskLedger(resolveDir(entry.tasksFile),
@@ -900,6 +907,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   // so the orb's lifecycle stays tied to DSH ("和 DSH 作为依赖").
   return () => {
     clearInterval(pruneTasks);
+    clearTimeout(pruneAudio);
     completion.dispose();
     output.dispose();
     panel.dispose();

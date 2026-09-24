@@ -65,10 +65,16 @@ function start(deferred = false): () => void {
     },
     provide() {}, on() {}, logger: { warn() {} },
   };
+  const firstApplyTimer = timers.length;
   const dispose = apply(context, {
     audioDir: dir, managedFile: join(dir, 'managed.json'), tasksFile: join(dir, 'tasks.json'),
     runtimeFile: join(dir, 'runtime.json'),
   })!;
+  // apply schedules startup cache maintenance before services can spawn a panel.
+  // Isolate that exact registration, not all 30s timers: backoff also reaches 30s.
+  const [maintenanceTimer] = timers.splice(firstApplyTimer, 1);
+  assert.equal(maintenanceTimer?.delay, 30_000);
+  assert.equal(maintenanceTimer?.unrefs, 1);
   disposers.push(dispose);
   return dispose;
 }

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 import JarvisPanelCore
 
@@ -53,15 +54,28 @@ enum Log {
   private static let url = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".dsh/jarvis/panel-debug.log")
 
+  private static let lock = NSLock()
+  private static var rotation = LogRotation()
+
   static func write(_ message: String) {
+    lock.lock()
+    defer { lock.unlock() }
     let line = "\(Date().ISO8601Format()) \(message)\n"
-    if let h = FileHandle(forWritingAtPath: url.path) {
-      h.seekToEndOfFile()
-      h.write(Data(line.utf8))
-      h.closeFile()
-    } else {
-      try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try? line.write(to: url, atomically: true, encoding: .utf8)
-    }
+    do {
+      if let h = FileHandle(forWritingAtPath: url.path) {
+        defer { try? h.close() }
+        try h.seekToEnd()
+        try h.write(contentsOf: Data(line.utf8))
+      } else {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try line.write(to: url, atomically: true, encoding: .utf8)
+      }
+      if rotation.recordWrite(),
+         let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber,
+         LogRotation.shouldRotate(size: size.int64Value) {
+        // POSIX rename replaces the prior archive atomically; failure preserves the active log.
+        _ = rename(url.path, url.path + ".1")
+      }
+    } catch { /* Logging must not interrupt the panel. */ }
   }
 }

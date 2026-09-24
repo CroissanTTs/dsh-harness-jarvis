@@ -34,6 +34,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { MessageId } from '@deepseek-ai/dsh-llm';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import { homedir } from 'node:os';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { join, dirname } from 'node:path';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -46,6 +47,7 @@ import { deliver, visibleWorkers, workspaceName } from './sessions.ts';
 import { ManagedSet } from './managed.ts';
 import { TaskLedger } from './tasks.ts';
 import { CompletionJudge } from './completion.ts';
+import { OutputCoordinator } from './output.ts';
 import { claimsTurnEnd } from './turn-end.ts';
 import { routedInput, toConversation } from './conversation.ts';
 
@@ -212,8 +214,8 @@ interface JarvisDeps {
   sessionRows: () => Promise<SessionRow[]>;
   setManaged: (id: string, on: boolean) => Promise<'ok' | 'not-found'>;
   say: (text: string) => Promise<SpeakResult>;
-  ask: (question: string, choices: string[], exec?: { agent?: unknown; signal?: AbortSignal }) => Promise<string>;
-  askContinuation: (session: string, task: string, ask: () => Promise<string>) => Promise<string>;
+  ask: (question: string, choices: string[], exec?: { agent?: unknown; signal?: AbortSignal },
+    continuation?: { session: string; task: string }) => Promise<string>;
 }
 
 interface SessionRow {
@@ -378,33 +380,40 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
 
   const setManaged = async (id: string, on: boolean): Promise<'ok' | 'not-found'> => {
     if (on && !listWorkerIds(ctx, entry).includes(id)) return 'not-found';
-    if (!on) { ledger.dropSession(id); completion.invalidate(id); }
+    if (!on) { ledger.dropSession(id); completion.invalidate(id); output.dropSession(id); }
     if (on ? managed.add(id) : managed.remove(id)) live.touch();
     return 'ok';
   };
 
+  const output = new OutputCoordinator({ say: text => deps.say(text), managed: id => managed.has(id) });
+  // CompletionJudge's text-only callback keeps its originating session across model awaits.
+  const completionContext = new AsyncLocalStorage<{ session: string; title: string; reason?: string }>();
   const deps: JarvisDeps = {
     managed,
     ledger,
     sessionRows,
     setManaged,
-    askContinuation: (session, task, ask) => completion.askContinuation(session, task, ask),
     say: (text) => speakAsJarvis(builtInTts, entry, text),
-    ask: async (question, choices, exec) => {
-      const uq = (ctx as any).get?.('userQuestions') as { ask?: (r: unknown) => Promise<any> } | undefined;
-      if (!uq?.ask) throw new Error('ask_user: userQuestions service unavailable');
-      const agent = exec?.agent ?? jarvisHandle?.agent;
-      const answer = await uq.ask({
-        questions: [{
-          id: 'q1', question, header: '贾维斯',
-          ...(choices.length > 0 ? { options: choices.map((label) => ({ label })) } : {}),
-        }],
-        ...(agent ? { agent } : {}),
-        ...(exec?.signal ? { signal: exec.signal } : {}),
-      });
-      const first = answer?.answers?.[0];
-      const picked = [...(first?.selected ?? []), ...(first?.custom ? [first.custom] : [])];
-      return picked.join('；');
+    ask: async (question, choices, exec, continuation) => {
+      const ask = async (): Promise<string> => {
+        const uq = (ctx as any).get?.('userQuestions') as { ask?: (r: unknown) => Promise<any> } | undefined;
+        if (!uq?.ask) throw new Error('ask_user: userQuestions service unavailable');
+        const agent = exec?.agent ?? jarvisHandle?.agent;
+        const answer = await uq.ask({
+          questions: [{
+            id: 'q1', question, header: '贾维斯',
+            ...(choices.length > 0 ? { options: choices.map((label) => ({ label })) } : {}),
+          }],
+          ...(agent ? { agent } : {}),
+          ...(exec?.signal ? { signal: exec.signal } : {}),
+        });
+        const first = answer?.answers?.[0];
+        const picked = [...(first?.selected ?? []), ...(first?.custom ? [first.custom] : [])];
+        return picked.join('；');
+      };
+      return await output.ask(() => continuation
+        ? completion.askContinuation(continuation.session, continuation.task, ask) : ask(),
+      { session: continuation?.session, signal: exec?.signal }) ?? '';
     },
   };
 
@@ -432,8 +441,20 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     config: () => entry,
     llm: () => llm,
     messages: id => (ctx as any).get?.('agents')?.get?.(id)?.session?.deriveMessages?.() ?? [],
-    title: async id => (await sessionRows()).find(row => row.id === id)?.title || id,
-    say: text => deps.say(text),
+    title: async id => {
+      const title = (await sessionRows()).find(row => row.id === id)?.title.trim() || id;
+      const context = completionContext.getStore();
+      if (context) context.title = title;
+      return title;
+    },
+    say: text => {
+      const context = completionContext.getStore();
+      return output.announce(context?.session ?? '', text, {
+        title: context?.title,
+        // The continuation-limit warning must never become a successful completion summary.
+        immediate: !context || context.reason !== 'completed' || text.startsWith(`${context.title}还没做完：`),
+      });
+    },
     notify: text => {
       const agent = jarvisHandle?.agent ?? jarvisHandle;
       const notice: UserMessage = {
@@ -772,7 +793,8 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
         completion.turnStarted(sid);
         break;
       case 'turn/end':
-        void completion.turnEnded(sid, event.data?.reason?.kind).catch(error =>
+        void completionContext.run({ session: sid, title: sid, reason: event.data?.reason?.kind },
+          () => completion.turnEnded(sid, event.data?.reason?.kind)).catch(error =>
           debug(entry, 'turn/end judge failed: ' + (error instanceof Error ? error.message : String(error))));
         break;
       case 'approval/asked':
@@ -805,6 +827,7 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
   return () => {
     clearInterval(pruneTasks);
     completion.dispose();
+    output.dispose();
     killPanel(entry);
   };
 }
@@ -1127,7 +1150,7 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
         throw new Error('ask_user: continuation needs both session and task');
       }
       const answer = args.session && args.task
-        ? await deps.askContinuation(args.session, args.task, () => deps.ask(question, ['继续', '不用了'], exec))
+        ? await deps.ask(question, ['继续', '不用了'], exec, { session: args.session, task: args.task })
         : await deps.ask(question, choices, exec);
       return text(answer ? `用户回答:${answer}` : '用户没有给出回答');
     },
@@ -1147,7 +1170,6 @@ function registerJarvisTools(agentCtx: Context, entry: JarvisConfig, deps: Jarvi
       }
       const target = (agentCtx as any).get?.('agents')?.get?.(args.session);
       if (!target) throw new Error('inject_to_session: target not found');
-      // TODO §3.2: acquire output lock
       const note: UserMessage = {
         id: MessageId(`jarvis-${Date.now().toString(36)}`),
         role: 'user',

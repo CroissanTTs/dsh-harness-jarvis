@@ -7,6 +7,7 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { apply, Config } from '../src/index.ts';
+import { OutputCoordinator } from '../src/output.ts';
 
 let dir: string;
 let dispose: (() => void) | void;
@@ -150,6 +151,52 @@ function delayedVerdict(): () => void {
 }
 
 describe('等价类', () => {
+  it('并发完成按真实会话交给协调器，失败立即播报', async () => {
+    const announcements: any[] = [];
+    mock.method(OutputCoordinator.prototype, 'announce', async (...args: any[]) => { announcements.push(args); });
+    for (const session of ['a', 'b']) await tools.get('inject_to_session').execute({ session, message: '执行' });
+    event('a', 'turn/end', 'completed');
+    event('b', 'turn/end', 'completed');
+    await settled(() => announcements.length === 2);
+    assert.deepEqual(announcements.map(a => a[0]).sort(), ['a', 'b']);
+    for (const [session, text, options] of announcements) {
+      assert.equal(text, `${session}：测试已修复`);
+      assert.equal(options.title, session);
+      assert.equal(options.immediate, false);
+    }
+    await tools.get('inject_to_session').execute({ session: 'b', message: '重试' });
+    event('b', 'turn/end', 'error');
+    await settled(() => announcements.length === 3);
+    assert.equal(announcements[2][0], 'b');
+    assert.equal(announcements[2][2].immediate, true);
+  });
+
+  it('ask_user 串行等待，原样传递 agent/signal 和续做 session/task', async () => {
+    let release!: (value: any) => void;
+    context.get('userQuestions').ask = async (request: any) => {
+      questions.push(request);
+      if (questions.length === 1) return new Promise(resolve => { release = resolve; });
+      return { answers: [{ selected: ['不用了'] }] };
+    };
+    verdict = { verdict: 'unsatisfied', summary: '未完成', missing: '补测试' };
+    await tools.get('inject_to_session').execute({ session: 'b', message: '执行' });
+    event('b', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'unsatisfied');
+    const task = tasks()[0].id;
+    const first = tools.get('ask_user').execute({ question: '第一个' });
+    const agent = { id: 'caller' };
+    const signal = new AbortController().signal;
+    const second = tools.get('ask_user').execute({ question: '继续吗', session: 'b', task }, { agent, signal });
+    await flush();
+    assert.equal(questions.length, 1);
+    release({ answers: [{ selected: ['好'] }] });
+    await Promise.all([first, second]);
+    assert.equal(questions.length, 2);
+    assert.equal(questions[1].agent, agent);
+    assert.equal(questions[1].signal, signal);
+    assert.equal(tasks().find(t => t.id === task).status, 'dropped');
+  });
+
   it('提供 claimsTurnEnd 并随台账从 open、judging 到 done 变化', async () => {
     const service = context.get('jarvis');
     assert.equal(service.claimsTurnEnd('a'), false);
@@ -252,6 +299,38 @@ describe('等价类', () => {
 });
 
 describe('边界值', () => {
+  it('达到续轮上限的提醒不合并成完成', async () => {
+    await startPlugin({ maxContinueRounds: 0 });
+    const announcements: any[] = [];
+    mock.method(OutputCoordinator.prototype, 'announce', async (...args: any[]) => { announcements.push(args); });
+    verdict = { verdict: 'unsatisfied', summary: '未完成', missing: '补测试' };
+    await tools.get('inject_to_session').execute({ session: 'a', message: '执行' });
+    event('a', 'turn/end', 'completed');
+    await settled(() => announcements.length === 1);
+    assert.match(announcements[0][1], /还没做完/);
+    assert.equal(announcements[0][2].immediate, true);
+  });
+
+  it('排队续做问题在移出后丢弃，重新托管也不弹旧问题', async () => {
+    let release!: (value: any) => void;
+    context.get('userQuestions').ask = async (request: any) => {
+      questions.push(request);
+      if (questions.length === 1) return new Promise(resolve => { release = resolve; });
+      return { answers: [] };
+    };
+    verdict = { verdict: 'unsatisfied', summary: '未完成', missing: '补测试' };
+    await tools.get('inject_to_session').execute({ session: 'a', message: '执行' });
+    event('a', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'unsatisfied');
+    const first = tools.get('ask_user').execute({ question: '第一问' });
+    const second = tools.get('ask_user').execute({ question: '继续吗', session: 'a', task: tasks()[0].id });
+    await tools.get('release_session').execute({ session: 'a' });
+    await tools.get('manage_session').execute({ session: 'a' });
+    release({ answers: [] });
+    await Promise.all([first, second]);
+    assert.equal(questions.length, 1);
+  });
+
   it('判断关闭时不接管，重新启用后等待续轮仍接管，移出即放弃', async () => {
     await tools.get('inject_to_session').execute({ session: 'a', message: '任务' });
     await startPlugin({ judgeEnabled: false });
@@ -312,6 +391,27 @@ describe('边界值', () => {
 });
 
 describe('异常路径', () => {
+  it('排队期间任务被新任务替换，不向用户展示旧续做问题', async () => {
+    let release!: (value: any) => void;
+    context.get('userQuestions').ask = async (request: any) => {
+      questions.push(request);
+      if (questions.length === 1) return new Promise(resolve => { release = resolve; });
+      return { answers: [{ selected: ['继续'] }] };
+    };
+    verdict = { verdict: 'unsatisfied', summary: '未完成', missing: '补测试' };
+    await tools.get('inject_to_session').execute({ session: 'a', message: '执行' });
+    event('a', 'turn/end', 'completed');
+    await settled(() => tasks()[0]?.status === 'unsatisfied');
+    const first = tools.get('ask_user').execute({ question: '第一问' });
+    const second = tools.get('ask_user').execute({ question: '旧问题', session: 'a', task: tasks()[0].id });
+    const rejected = assert.rejects(second, /任务已变化/);
+    event('a', 'turn/start');
+    release({ answers: [] });
+    await first;
+    await rejected;
+    assert.equal(questions.length, 1);
+  });
+
   it('未知、空或非字符串会话 id 不接管且不抛错', () => {
     const service = context.get('jarvis');
     for (const id of ['unknown', '', ' ', undefined, null, 123]) {

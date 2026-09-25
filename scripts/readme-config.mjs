@@ -38,7 +38,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const { Config, SettingsSchema } = await import('../lib/index.js');
   const table = renderConfigTable(Config, SettingsSchema);
   // The English README is the npm/primary doc; the Chinese README mirrors it.
-  const files = ['README.md', 'README.zh.md'];
+  const files = ['README.md', 'README.en.md'];
   let stale = false;
   for (const name of files) {
     const file = new URL('../' + name, import.meta.url);

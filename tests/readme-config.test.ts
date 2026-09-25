@@ -6,7 +6,7 @@ import { renderConfigTable, replaceConfigTable, PUBLIC_FIELDS } from '../scripts
 
 describe('等价类', () => {
   it('README configuration is generated from the actual Config and settings schema (both languages)', () => {
-    for (const name of ['README.md', 'README.zh.md']) {
+    for (const name of ['README.md', 'README.en.md']) {
       const readme = readFileSync(new URL('../' + name, import.meta.url), 'utf8');
       assert.equal(replaceConfigTable(readme, renderConfigTable(Config, SettingsSchema)), readme, `${name} table is stale`);
       for (const key of Object.keys(Config.dict!)) {

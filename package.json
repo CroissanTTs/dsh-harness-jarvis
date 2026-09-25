@@ -29,7 +29,7 @@
     "scripts/smoke.mjs",
     "cordis.patch.yml",
     "README.md",
-    "README.zh.md",
+    "README.en.md",
     "LICENSE",
     "scripts/synth-edge.mjs",
     "scripts/readme-config.mjs",

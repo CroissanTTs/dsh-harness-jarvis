@@ -31,16 +31,16 @@ The orb is a Metal particle field — a hex core that diffuses into two rings an
 - 交互式设计稿（克隆后本地打开即可看动效）/ Interactive design sketches, open locally after cloning:
   - [docs/design/orb-states.html](docs/design/orb-states.html) — 各状态的粒子动效与实际尺寸对比
   - [docs/design/orb-visual-direction.html](docs/design/orb-visual-direction.html) — 早期视觉方向探索
-- 以下截图由仓库内 Snapshotter 用演示数据生成，不含真实会话。All screenshots use Snapshotter demo data, never real conversations.
+- 动图由仓库内同款粒子模拟直接渲染，截图由 Snapshotter 生成——均为演示数据，不含真实会话。Animations are rendered from the same particle simulation; screenshots use Snapshotter demo data — never real conversations.
 
 <p align="center">
-  <img src="docs/images/01-idle.png" height="300" alt="空闲悬浮的贾维斯光球 / The orb at rest">
-  <img src="docs/images/05-attention.png" height="300" alt="等待决策的提醒状态 / Attention state">
+  <img src="docs/design/orb-idle.gif" height="260" alt="空闲悬浮动图 / The idle loop">
+  <img src="docs/design/orb-attention.gif" height="260" alt="等待决策的心跳提醒动图 / The attention heartbeat">
 </p>
-<p align="center"><em>空闲悬浮 · 等待你拍板时的提醒状态 / At rest · attention</em></p>
+<p align="center"><em>空闲悬浮 · 等待你拍板时的"咚-咚"心跳提醒 / At rest · the attention heartbeat</em></p>
 <p align="center">
-  <img src="docs/images/11-corner-topright-strip.png" height="340" alt="拖到屏幕角落融成扁条 / Melted flat into a screen corner">
-  <img src="docs/images/19-approval-presets.png" height="340" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
+  <img src="docs/design/orb-edge-melt.gif" height="300" alt="贴边融变动图：融进墙角成 L 形扁条，再涨回球形 / The edge-melt loop">
+  <img src="docs/images/19-approval-presets.png" height="300" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
 </p>
 <p align="center"><em>贴边融变收纳 · 审批卡片与工作区预设 / Edge melting · the approval card</em></p>
 

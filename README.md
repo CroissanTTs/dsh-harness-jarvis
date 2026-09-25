@@ -9,7 +9,7 @@
 
 A resident floating assistant for DSH Desktop: snap-approve permission requests from the orb's card, summon a quick conversation with one shortcut, and get a spoken greeting — all from a living particle orb.
 
-<p>
+<p align="center">
   <img src="docs/design/orb-showcase.gif" width="320" alt="贾维斯光球状态动效：待机、等待、思考、说话、需要你处理 / The orb cycling through its states">
 </p>
 
@@ -33,14 +33,16 @@ The orb is a Metal particle field — a hex core that diffuses into two rings an
   - [docs/design/orb-visual-direction.html](docs/design/orb-visual-direction.html) — 早期视觉方向探索
 - 以下截图由仓库内 Snapshotter 用演示数据生成，不含真实会话。All screenshots use Snapshotter demo data, never real conversations.
 
-<p>
-  <img src="docs/images/01-idle.png" width="420" alt="空闲悬浮的贾维斯光球 / The orb at rest">
-  <img src="docs/images/11-corner-topright-strip.png" width="360" alt="拖到屏幕角落融成扁条 / Melted flat into a screen corner">
+<p align="center">
+  <img src="docs/images/01-idle.png" height="300" alt="空闲悬浮的贾维斯光球 / The orb at rest">
+  <img src="docs/images/05-attention.png" height="300" alt="等待决策的提醒状态 / Attention state">
 </p>
-<p>
-  <img src="docs/images/05-attention.png" width="420" alt="等待决策的提醒状态 / Attention state">
-  <img src="docs/images/19-approval-presets.png" width="420" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
+<p align="center"><em>空闲悬浮 · 等待你拍板时的提醒状态 / At rest · attention</em></p>
+<p align="center">
+  <img src="docs/images/11-corner-topright-strip.png" height="340" alt="拖到屏幕角落融成扁条 / Melted flat into a screen corner">
+  <img src="docs/images/19-approval-presets.png" height="340" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
 </p>
+<p align="center"><em>贴边融变收纳 · 审批卡片与工作区预设 / Edge melting · the approval card</em></p>
 
 ## 安装 / Installation
 

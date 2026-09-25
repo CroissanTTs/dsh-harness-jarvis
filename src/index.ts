@@ -159,9 +159,11 @@ export const Config = z.object({
   judgeModel: z.string().default(''),
   judgeTimeoutMs: z.number().default(20_000),
   maxContinueRounds: z.number().default(2),
-  // Jarvis agent creation (§9.1)
-  provider: z.string().default('bailian'),
-  model: z.string().default('qwen3.8-max-0902'),
+  // Jarvis agent creation (§9.1). Empty means "auto": the first available
+  // provider from the llm service and that provider's first model, resolved
+  // when the agent is created — never a hardcoded vendor default.
+  provider: z.string().default(''),
+  model: z.string().default(''),
   jarvisSessionId: z.string().default('jarvis'),
   jarvisCwd: z.string().default('~/jarvis'),
   // Restart welcome greetings (random pick). Built-in zh [欢迎回来,欢迎回归] /
@@ -171,8 +173,8 @@ export const Config = z.object({
 
 /** The settings page intentionally omits composition-owned paths and identity. */
 export const SettingsSchema = z.object({
-  provider: Config.dict!.provider.description('贾维斯模型提供方；重启 DSH 生效。'),
-  model: Config.dict!.model.description('贾维斯模型；重启 DSH 生效。'),
+  provider: Config.dict!.provider.description('贾维斯模型提供方；留空自动选取第一个可用提供方；重启 DSH 生效。'),
+  model: Config.dict!.model.description('贾维斯模型；留空自动选取该提供方的第一个模型；重启 DSH 生效。'),
   edgeVoice: Config.dict!.edgeVoice.description('内置语音音色（voice-mini 不可用时）；下一次播报生效。'),
   greetings: Config.dict!.greetings.description('附加欢迎语；重启欢迎时随机选用。'),
   askInterception: Config.dict!.askInterception.description('允许贾维斯代答托管会话的低风险选择题；默认关闭，不确定时仍交给你。'),
@@ -901,6 +903,25 @@ export function apply(ctx: Context, rawConfig: unknown): (() => void) | void {
     const loop = (loopCtx as any).get('agentLoop') as
       | { createAgent: (ownerCtx: Context, opts: any) => Promise<any>; resume: (ownerCtx: Context, opts: any) => Promise<any> }
       | undefined;
+    // Resolve the auto model: empty provider → first llm adapter, empty model
+    // → that provider's first entry. The result is written back into entry so
+    // the judge fallback, /config route, and settings pinning all see the
+    // concrete values the live agent actually uses. The llm service is read
+    // from this context or the earlier llm inject, whichever is available.
+    try {
+      const svc = ((loopCtx as any).get('llm') ?? llm) as any;
+      if ((!entry.provider.trim() || !entry.model.trim()) && svc) {
+        const adapters = svc.adapters;
+        const keys = adapters instanceof Map ? [...adapters.keys()].map(String) : [];
+        if (!entry.provider.trim() && keys.length > 0) entry.provider = keys[0];
+        if (entry.provider.trim() && !entry.model.trim() && typeof svc.listModels === 'function') {
+          const models = svc.listModels(entry.provider) ?? [];
+          const first = models?.[0];
+          entry.model = String(typeof first === 'string' ? first : (first?.id ?? ''));
+        }
+        debug(entry, 'agent model auto-resolved: provider=' + entry.provider + ' model=' + entry.model);
+      }
+    } catch (e) { debug(entry, 'agent model auto-resolve failed: ' + (e instanceof Error ? e.message : String(e))); }
     if (!loop) {
       debug(entry, 'agentLoop service NOT found (get returned undefined)');
       ctx.logger?.warn?.('dsh-harness-jarvis: agentLoop not found');

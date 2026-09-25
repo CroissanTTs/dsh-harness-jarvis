@@ -74,7 +74,7 @@ Source install for now; the native panel needs macOS 14+ and the Swift 6 toolcha
    ```
 
 3. Run `pnpm install` in the profile directory to resolve the `link:` dependency (do not install the link inside this repository). The plugin's `dsh.bundle.patch` points at [cordis.patch.yml](cordis.patch.yml); the plugin creates its own Jarvis session — do not insert a duplicate plugin row in the profile.
-4. In a profile override or DSH's Jarvis settings page, pick a `provider` / `model` you have already configured (the repository defaults to `bailian` / `qwen3.8-max-0902`, which is not guaranteed to match your environment). Restart DSH, then run `npm run smoke` to verify.
+4. In a profile override or DSH's Jarvis settings page, set a `provider` / `model` — or **leave them empty**: the plugin then auto-picks the first available provider and that provider's first model (effective after a DSH restart; verify with `npm run smoke`).
 
 Hard-required services are `tools`, `userQuestions`, and `jobs`; `agentLoop`, `llm`, `systemPrompt`, `webServer`, and `settings` attach opportunistically, and the plugin degrades gracefully when they are missing (no webServer means no panel communication).
 
@@ -95,8 +95,8 @@ The table below is the public, user-facing surface, generated from the schema in
 | `audioDir` | string | `"~/.dsh/jarvis"` | 否 / No |
 | `ttsBackend` | "edge" | `"edge"` | 否 / No |
 | `edgeVoice` | string | `"zh-CN-YunjianNeural"` | 是 / Yes |
-| `provider` | string | `"bailian"` | 是 / Yes |
-| `model` | string | `"qwen3.8-max-0902"` | 是 / Yes |
+| `provider` | string | `""` | 是 / Yes |
+| `model` | string | `""` | 是 / Yes |
 | `greetings` | string[] | `[]` | 是 / Yes |
 <!-- CONFIG:END -->
 

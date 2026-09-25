@@ -74,7 +74,7 @@
    ```
 
 3. 在 profile 目录执行 `pnpm install` 解析 `link:` 依赖（不要在仓库里安装此链接）。插件的 `dsh.bundle.patch` 指向 [cordis.patch.yml](cordis.patch.yml)；插件会自己创建贾维斯会话，不要在 profile 里重复插入同 ID 条目。
-4. 在 profile 覆盖配置或 DSH 的贾维斯设置页里，选择你已配置好的 `provider` / `model`（仓库默认 `bailian` / `qwen3.8-max-0902`，不保证与你的环境匹配）。重启 DSH 后执行 `npm run smoke` 验证。
+4. 在 profile 覆盖配置或 DSH 的贾维斯设置页里指定 `provider` / `model`，也可以**留空**——留空时插件会自动选取第一个可用提供方与该提供方的第一个模型（重启 DSH 后生效，可用 `npm run smoke` 验证）。
 
 硬依赖服务为 `tools`、`userQuestions`、`jobs`；`agentLoop`、`llm`、`systemPrompt`、`webServer`、`settings` 等按可用性接入，缺少时插件降级运行（无 webServer 则没有面板通信入口）。
 
@@ -95,8 +95,8 @@
 | `audioDir` | string | `"~/.dsh/jarvis"` | 否 / No |
 | `ttsBackend` | "edge" | `"edge"` | 否 / No |
 | `edgeVoice` | string | `"zh-CN-YunjianNeural"` | 是 / Yes |
-| `provider` | string | `"bailian"` | 是 / Yes |
-| `model` | string | `"qwen3.8-max-0902"` | 是 / Yes |
+| `provider` | string | `""` | 是 / Yes |
+| `model` | string | `""` | 是 / Yes |
 | `greetings` | string[] | `[]` | 是 / Yes |
 <!-- CONFIG:END -->
 

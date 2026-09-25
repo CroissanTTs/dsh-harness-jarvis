@@ -36,10 +36,20 @@ export function replaceConfigTable(readme, table) {
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   const { Config, SettingsSchema } = await import('../lib/index.js');
-  const file = new URL('../README.md', import.meta.url);
-  const before = await readFile(file, 'utf8');
-  const after = replaceConfigTable(before, renderConfigTable(Config, SettingsSchema));
-  if (process.argv.includes('--check')) {
-    if (before !== after) { console.error('README configuration is stale; run npm run docs:config.'); process.exitCode = 1; }
-  } else await writeFile(file, after);
+  const table = renderConfigTable(Config, SettingsSchema);
+  // The English README is the npm/primary doc; the Chinese README mirrors it.
+  const files = ['README.md', 'README.zh.md'];
+  let stale = false;
+  for (const name of files) {
+    const file = new URL('../' + name, import.meta.url);
+    const before = await readFile(file, 'utf8');
+    let after;
+    try { after = replaceConfigTable(before, table); } catch { console.error(`${name} has no configuration markers`); process.exitCode = 1; continue; }
+    if (before !== after) stale = true;
+    if (!process.argv.includes('--check')) await writeFile(file, after);
+  }
+  if (stale && process.argv.includes('--check')) {
+    console.error('README configuration is stale; run npm run docs:config.');
+    process.exitCode = 1;
+  }
 }

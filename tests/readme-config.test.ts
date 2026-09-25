@@ -5,16 +5,18 @@ import { Config, SettingsSchema } from '../src/index.ts';
 import { renderConfigTable, replaceConfigTable, PUBLIC_FIELDS } from '../scripts/readme-config.mjs';
 
 describe('等价类', () => {
-  it('README configuration is generated from the actual Config and settings schema', () => {
-    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-    assert.equal(replaceConfigTable(readme, renderConfigTable(Config, SettingsSchema)), readme);
-    for (const key of Object.keys(Config.dict!)) {
-      // Public fields must appear in the README; internal fields must NOT be
-      // advertised there (they stay configurable but undocumented).
-      if (PUBLIC_FIELDS.has(key)) {
-        assert.ok(readme.includes('`' + key + '`'));
-      } else {
-        assert.ok(!readme.includes('`' + key + '`'), `internal field ${key} should not be in README`);
+  it('README configuration is generated from the actual Config and settings schema (both languages)', () => {
+    for (const name of ['README.md', 'README.zh.md']) {
+      const readme = readFileSync(new URL('../' + name, import.meta.url), 'utf8');
+      assert.equal(replaceConfigTable(readme, renderConfigTable(Config, SettingsSchema)), readme, `${name} table is stale`);
+      for (const key of Object.keys(Config.dict!)) {
+        // Public fields must appear in both READMEs; internal fields must NOT
+        // be advertised there (they stay configurable but undocumented).
+        if (PUBLIC_FIELDS.has(key)) {
+          assert.ok(readme.includes('`' + key + '`'), `${name} should document ${key}`);
+        } else {
+          assert.ok(!readme.includes('`' + key + '`'), `internal field ${key} should not be in ${name}`);
+        }
       }
     }
   });

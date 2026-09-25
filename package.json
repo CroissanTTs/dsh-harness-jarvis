@@ -11,6 +11,14 @@
     "macos", "悬浮窗", "桌面助手", "桌面宠物"
   ],
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CroissanTTs/dsh-harness-jarvis.git"
+  },
+  "homepage": "https://github.com/CroissantTTs/dsh-harness-jarvis#readme",
+  "bugs": {
+    "url": "https://github.com/CroissantTTs/dsh-harness-jarvis/issues"
+  },
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",

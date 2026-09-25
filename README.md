@@ -1,24 +1,32 @@
 # dsh-harness-jarvis · 贾维斯
 
-桌面上的贾维斯：一颗常驻悬浮的粒子光球，替你盯住权限审批，随时唤起快速对话。
+![version](https://img.shields.io/badge/version-0.7.1-blue?style=flat-square)
+![for DSH Desktop](https://img.shields.io/badge/for-DSH_Desktop-6C5CE7?style=flat-square)
+![macOS](https://img.shields.io/badge/platform-macOS_14%2B-lightgrey?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-A floating desktop assistant for DSH Desktop — a particle orb that keeps an eye on permission approvals and is always one shortcut away for a quick conversation.
+贾维斯是常驻桌面的悬浮助手：DSH 弹出权限审批时，悬浮窗立刻出现卡片，一键**允许 / 拒绝 / 总是允许（此工作区）**，与主窗口竞答、先到者生效；任何时候按 `⌃⌥J` 就能唤出输入条和他对话，对话记录内嵌面板；启动时他还会出声打招呼。他的本体是一颗随状态呼吸的粒子光球——思考、说话、等你拍板各有动效，拖到屏幕边缘就融进墙里收起，要用时一碰涨回球形。
 
-当前 **0.7.1** 是"助手版"：聚焦两件事——**快速权限审批**与**悬浮式快速对话**。完整愿景在[路线图](#路线图--roadmap)中继续推进。
-
-Version 0.7.1 is the *assistant* release: quick approvals and floating chat first. The bigger vision ships in later releases.
-
-## 形象 / The orb
-
-贾维斯的本体是一颗 Metal 粒子光球：六边形核心，向外两次扩散成环，粒子在环间呼吸。空闲时安静悬浮，思考、说话、等待决策、出错各有一套动效；把它拖到屏幕边缘，光球会"融"进墙里，变成一条贴边的扁条，要用时一碰又涨回球形。
-
-The orb is a Metal particle field — a hex core that diffuses into two rings and breathes between them. Each state (idle, thinking, speaking, attention, error) has its own motion. Drag it to a screen edge and it melts flat into the wall; touch it and it blooms back.
-
-下方动图循环展示五个状态：待机 → 等待消息 → 思考 → 说话 → 需要你处理。The animation below loops through five states: idle, awaiting, thinking, speaking, and attention.
+A resident floating assistant for DSH Desktop: snap-approve permission requests from the orb's card, summon a quick conversation with one shortcut, and get a spoken greeting — all from a living particle orb.
 
 <p>
   <img src="docs/design/orb-showcase.gif" width="320" alt="贾维斯光球状态动效：待机、等待、思考、说话、需要你处理 / The orb cycling through its states">
 </p>
+
+当前 **0.7.1** 是"助手版"：上面这些能力开箱即用；完整的贾维斯愿景在[路线图](#路线图--roadmap)中继续推进。
+
+## 贾维斯能做什么 / What Jarvis does
+
+- 🔔 **权限审批 / Approvals**：DSH 弹出权限请求 → 悬浮窗出现审批卡片，**允许 / 拒绝 / 总是允许（此工作区）**一键作答；面板与 DSH 主窗口竞答，先到者生效，不必切回主窗口。Answer approvals where they find you — the panel races the DSH window, and the first answer wins.
+- ⌨️ **悬浮式对话 / Floating chat**：全局快捷键 `⌃⌥J`（默认，可在面板设置中修改）随时唤出快速输入条，和贾维斯直接聊；对话记录内嵌面板，随点随看。One shortcut summons the input bar, with the history inline.
+- 🔊 **语音问候 / Spoken greeting**：启动时贾维斯出声打招呼，问候语与发音人可配置，悬停光球可静音。A configurable, mutable startup greeting.
+- ✨ **桌面形象 / Presence**：Metal 粒子光球——五种状态动效、贴边融变、悬停唤醒，不用时安静待在屏幕角落。A particle orb that breathes with its state and tucks itself away.
+
+## 光球与设计稿 / The orb
+
+贾维斯的本体是一颗 Metal 粒子光球：六边形核心，向外两次扩散成环，粒子在环间呼吸。空闲时安静悬浮，思考、说话、等待决策、出错各有一套动效；把它拖到屏幕边缘，光球会"融"进墙里，变成一条贴边的扁条，要用时一碰又涨回球形。
+
+The orb is a Metal particle field — a hex core that diffuses into two rings and breathes between them. Each state (idle, thinking, speaking, attention, error) has its own motion. Drag it to a screen edge and it melts flat into the wall; touch it and it blooms back.
 
 - 交互式设计稿（克隆后本地打开即可看动效）/ Interactive design sketches, open locally after cloning:
   - [docs/design/orb-states.html](docs/design/orb-states.html) — 各状态的粒子动效与实际尺寸对比
@@ -33,13 +41,6 @@ The orb is a Metal particle field — a hex core that diffuses into two rings an
   <img src="docs/images/05-attention.png" width="420" alt="等待决策的提醒状态 / Attention state">
   <img src="docs/images/19-approval-presets.png" width="420" alt="审批卡片与工作区预设 / Approval card with a workspace preset">
 </p>
-
-## 功能 / Features (0.7.1)
-
-- **权限审批 / Approvals**：DSH 弹出权限请求时，悬浮窗出现审批卡片，直接**允许 / 拒绝 / 总是允许（此工作区）**；面板和 DSH 主窗口竞答，先到者生效。Approve or deny from the floating card — the panel races the DSH window, first answer wins.
-- **悬浮式对话 / Floating chat**：全局快捷键 `⌃⌥J`（默认，可在面板设置中修改）随时唤出快速输入条，和贾维斯直接聊；对话记录内嵌在面板里随点随看。One shortcut summons the input bar; talk to Jarvis directly, with inline history.
-- **语音问候 / Voice**：启动时贾维斯出声打招呼（可静音、可自定义问候语），发音人可配置。Jarvis greets you on startup; mute and voice are configurable.
-- **形象与手感 / Presence**：粒子光球 + 五种状态动效 + 贴边融变 + 悬停唤醒，不用时安静待在角落。The orb itself: five state motions, edge melting, hover wake.
 
 ## 安装 / Installation
 

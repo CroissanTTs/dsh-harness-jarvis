@@ -6,7 +6,9 @@
   "author": "zane",
   "keywords": [
     "deepseek", "dsh", "harness", "jarvis", "assistant",
-    "agent", "approval", "voice", "tts", "orb"
+    "agent", "approval", "voice", "tts", "orb",
+    "floating-window", "desktop-assistant", "desktop-pet", "desktop-widget",
+    "macos", "悬浮窗", "桌面助手", "桌面宠物"
   ],
   "type": "module",
   "main": "./lib/index.js",

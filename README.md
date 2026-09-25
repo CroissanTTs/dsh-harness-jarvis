@@ -5,9 +5,9 @@
 ![macOS](https://img.shields.io/badge/platform-macOS_14%2B-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-贾维斯是常驻桌面的悬浮助手：DSH 弹出权限审批时，悬浮窗立刻出现卡片，一键**允许 / 拒绝 / 总是允许（此工作区）**，与主窗口竞答、先到者生效；任何时候按 `⌃⌥J` 就能唤出输入条和他对话，对话记录内嵌面板；启动时他还会出声打招呼。他的本体是一颗随状态呼吸的粒子光球——思考、说话、等你拍板各有动效，拖到屏幕边缘就融进墙里收起，要用时一碰涨回球形。
+贾维斯是常驻桌面的悬浮窗助手，也是一只有状态的桌面宠物：DSH 弹出权限审批时，悬浮窗立刻出现卡片，一键**允许 / 拒绝 / 总是允许（此工作区）**，与主窗口竞答、先到者生效；任何时候按 `⌃⌥J` 就能唤出输入条和他对话，对话记录内嵌面板；启动时他还会出声打招呼。他的本体是一颗随状态呼吸的粒子光球——思考、说话、等你拍板各有动效，拖到屏幕边缘就融进墙里收起，要用时一碰涨回球形。
 
-A resident floating assistant for DSH Desktop: snap-approve permission requests from the orb's card, summon a quick conversation with one shortcut, and get a spoken greeting — all from a living particle orb.
+A resident floating-window desktop assistant — and a living desktop pet — for DSH Desktop: snap-approve permission requests from the orb's card, summon a quick conversation with one shortcut, and get a spoken greeting.
 
 <p align="center">
   <img src="docs/design/orb-showcase.gif" width="320" alt="贾维斯光球状态动效：待机、等待、思考、说话、需要你处理 / The orb cycling through its states">
@@ -20,7 +20,7 @@ A resident floating assistant for DSH Desktop: snap-approve permission requests 
 - 🔔 **权限审批 / Approvals**：DSH 弹出权限请求 → 悬浮窗出现审批卡片，**允许 / 拒绝 / 总是允许（此工作区）**一键作答；面板与 DSH 主窗口竞答，先到者生效，不必切回主窗口。Answer approvals where they find you — the panel races the DSH window, and the first answer wins.
 - ⌨️ **悬浮式对话 / Floating chat**：全局快捷键 `⌃⌥J`（默认，可在面板设置中修改）随时唤出快速输入条，和贾维斯直接聊；对话记录内嵌面板，随点随看。One shortcut summons the input bar, with the history inline.
 - 🔊 **语音问候 / Spoken greeting**：启动时贾维斯出声打招呼，问候语与发音人可配置，悬停光球可静音。A configurable, mutable startup greeting.
-- ✨ **桌面形象 / Presence**：Metal 粒子光球——五种状态动效、贴边融变、悬停唤醒，不用时安静待在屏幕角落。A particle orb that breathes with its state and tucks itself away.
+- ✨ **桌面形象 / Presence**：Metal 粒子光球——五种状态动效、贴边融变、悬停唤醒，像一只安静的桌面宠物待在屏幕角落。A particle orb that breathes with its state — part desktop pet, part status light.
 
 ## 光球与设计稿 / The orb
 

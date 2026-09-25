@@ -22,6 +22,12 @@ A resident floating-window desktop assistant — and a living desktop pet — fo
 - 🔊 **语音问候 / Spoken greeting**：启动时贾维斯出声打招呼，问候语与发音人可配置，悬停光球可静音。A configurable, mutable startup greeting.
 - ✨ **桌面形象 / Presence**：Metal 粒子光球——五种状态动效、贴边融变、悬停唤醒，像一只安静的桌面宠物待在屏幕角落。A particle orb that breathes with its state — part desktop pet, part status light.
 
+下面这段动图是一次完整交互：`⌃⌥J` 展开输入条、打字发送、贾维斯思考并口播、审批卡片一键允许。The loop below is one full interaction: summon the quick bar, type and send, watch Jarvis think and speak, then allow an approval with one click.
+
+<p align="center">
+  <img src="docs/design/panel-tour.gif" width="520" alt="完整交互演示：展开输入条、打字、发送、思考与播报、审批一键允许 / A full interaction loop">
+</p>
+
 ## 光球与设计稿 / The orb
 
 贾维斯的本体是一颗 Metal 粒子光球：六边形核心，向外两次扩散成环，粒子在环间呼吸。空闲时安静悬浮，思考、说话、等待决策、出错各有一套动效；把它拖到屏幕边缘，光球会"融"进墙里，变成一条贴边的扁条，要用时一碰又涨回球形。

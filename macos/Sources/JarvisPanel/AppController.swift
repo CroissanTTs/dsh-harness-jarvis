@@ -11,6 +11,7 @@ final class AppController: NSObject {
   private let approvalRules: ApprovalRulesModel
   private let demo: DemoAPI?
   private let snapshotDir: URL?
+  private let tourDir: URL?
   private let overlayState = OverlayState()
   private let observer = SystemObserver()
   private let orb: OrbPanel
@@ -39,8 +40,9 @@ final class AppController: NSObject {
   override init() {
     let env = ProcessInfo.processInfo.environment
     snapshotDir = env["JARVIS_SNAPSHOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    tourDir = env["JARVIS_TOUR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
     store = snapshotDir.map { SettingsStore(url: $0.appendingPathComponent("panel.json")) } ?? SettingsStore()
-    demo = env["JARVIS_DEMO"] == "1" || snapshotDir != nil ? DemoAPI() : nil
+    demo = env["JARVIS_DEMO"] == "1" || snapshotDir != nil || tourDir != nil ? DemoAPI() : nil
     let api: JarvisAPI = demo ?? JarvisClient()
     model = PanelModel(api: api, store: store)
     approvalRules = ApprovalRulesModel(api: api)
@@ -74,6 +76,10 @@ final class AppController: NSObject {
       .receive(on: DispatchQueue.main)
       .sink { [weak self] _ in self?.modelChanged() }
       .store(in: &cancellables)
+    if let tourDir, let demo {
+      Task { await Snapshotter(controller: self, demo: demo, dir: tourDir).runTour() }
+      return
+    }
     if let snapshotDir, let demo {
       Task { await Snapshotter(controller: self, demo: demo, dir: snapshotDir).run() }
       return

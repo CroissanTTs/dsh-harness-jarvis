@@ -88,10 +88,98 @@ final class Snapshotter {
     exit(0)
   }
 
+  /// `JARVIS_TOUR=<dir>`: records a ~16s panel tour as a PNG frame sequence at
+  /// 20fps — the same offscreen pipeline as the stills, but advancing the orb
+  /// simulation frame by frame while scripting the real UI: the quick bar
+  /// expands, a message is typed and sent, the orb thinks and speaks with a
+  /// caption, then an approval card arrives and is answered. Assemble the
+  /// frames with ffmpeg afterwards; the process exits when done.
+  func runTour() async {
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    guard let screen = NSScreen.main else { exit(1) }
+    let v = screen.visibleFrame
+    let origin = CGPoint(x: v.midX + 60, y: v.midY + 20)
+    let (orb, _, model) = controller.snapshotParts
+    let fps: Double = 20
+    var index = 0
+
+    func frame() async {
+      let start = DispatchTime.now()
+      // Let the runloop apply pending SwiftUI updates before rasterising.
+      try? await Task.sleep(for: .milliseconds(2))
+      orb.orbView.advance(seconds: 1.0 / fps)
+      write(String(format: "f%04d", index), scale: 1)
+      index += 1
+      let budget: UInt64 = 50_000_000
+      let elapsed = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+      if elapsed < budget - 3_000_000 { try? await Task.sleep(nanoseconds: budget - elapsed) }
+    }
+    func hold(_ seconds: Double) async {
+      for _ in 0..<Int(seconds * fps) { await frame() }
+    }
+    func scene(_ i: Int) async {
+      await demo.setScene(i)
+      await model.refresh()
+    }
+
+    controller.snapshotTargets(false)
+    controller.snapshotHover(false)
+    controller.snapshotPlace(origin)
+    model.closeQuickBar()
+
+    // 1) idle breathing
+    await scene(0)
+    await hold(1.6)
+
+    // 2) the quick bar expands
+    model.openQuickBar()
+    await hold(1.1)
+
+    // 3) type a message
+    for ch in "总结一下今天的改动" {
+      model.draft += String(ch)
+      await hold(0.18)
+    }
+    await hold(0.5)
+
+    // 4) send — the bar folds and a toast confirms
+    _ = await model.submit()
+    await hold(0.9)
+
+    // 5) thinking
+    await scene(2)
+    await hold(2.4)
+
+    // 6) speaking with a caption
+    await scene(3)
+    await hold(3.2)
+
+    // 7) attention: an approval card arrives and is allowed
+    await scene(4)
+    model.openQuickBar()
+    await hold(0.7)
+    await hold(2.0)
+    if let item = (try? await demo.snapshot())?.pending.first {
+      await model.decide(item, allow: true)
+    }
+    await hold(0.8)
+
+    // 8) back to rest
+    model.closeQuickBar()
+    await scene(0)
+    await hold(1.6)
+
+    Log.write("tour frames written to \(dir.path) (\(index) frames)")
+    exit(0)
+  }
+
   private func write(_ name: String) {
+    write(name, scale: 2)
+  }
+
+  private func write(_ name: String, scale: CGFloat) {
     let (orb, overlay, _) = controller.snapshotParts
     let area = orb.frame.union(overlay.frame).insetBy(dx: -24, dy: -24).integral
-    let scale: CGFloat = 2
     guard let ctx = CGContext(data: nil, width: Int(area.width * scale), height: Int(area.height * scale),
                               bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }

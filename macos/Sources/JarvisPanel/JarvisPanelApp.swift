@@ -6,9 +6,11 @@ enum JarvisPanelMain {
   static func main() {
     // The host re-spawns us on every restart; a panel that survived as a
     // detached child must not be stacked with a second orb.
-    // Snapshot runs are offscreen and exit on their own, so they neither need nor take the lock.
-    let snapshot = ProcessInfo.processInfo.environment["JARVIS_SNAPSHOT"] != nil
-    if !snapshot && !AppDelegate.acquireSingleInstance() { exit(0) }
+    // Snapshot and tour runs are offscreen and exit on their own, so they
+    // neither need nor take the lock.
+    let env = ProcessInfo.processInfo.environment
+    let offscreen = env["JARVIS_SNAPSHOT"] != nil || env["JARVIS_TOUR"] != nil
+    if !offscreen && !AppDelegate.acquireSingleInstance() { exit(0) }
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     let delegate = AppDelegate()
